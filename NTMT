@@ -1,0 +1,507 @@
+--[[
+    Roblox Script - WindUI + Universal Model Loader
+    Hỗ trợ: Delta X, Codex, Hydrogen, Arceus X, Fluxus, Synapse X, Krnl, Wave, VegaX, Solara,
+            Xeno, Velocity, Electron, Trigon, JJsploit, ScriptWare, AWP.GG, ...
+    Nền tảng: iOS / Android / PC / VNG / Mac
+]]
+
+------------------------------------------------------------
+-- 1) UNIVERSAL EXECUTOR COMPATIBILITY LAYER
+------------------------------------------------------------
+
+local Executor = (identifyexecutor and identifyexecutor()) or
+                 (getexecutorname and getexecutorname()) or
+                 "Unknown"
+
+local cloneref = cloneref or clonereference or function(o) return o end
+
+local function universalHttpGet(url)
+    local ok, body = pcall(function()
+        return game:HttpGet(url)
+    end)
+    if ok and body and #body > 0 then return body end
+
+    local req = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+    if req then
+        local res = req({ Url = url, Method = "GET" })
+        if res and (res.Body or res.body) then
+            return res.Body or res.body
+        end
+    end
+
+    error("Không có HTTP function nào khả dụng trên executor: " .. tostring(Executor))
+end
+
+local queueteleport = queue_on_teleport or syn_queue_on_teleport or (syn and syn.queue_on_teleport) or function() end
+local hasFs = (writefile and readfile and isfile) ~= nil
+local genv = getgenv and getgenv() or _G
+
+------------------------------------------------------------
+-- 2) LOAD WINDUI
+------------------------------------------------------------
+
+local WindUI
+do
+    local ok, lib = pcall(function()
+        return loadstring(universalHttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
+    end)
+    if ok and lib then
+        WindUI = lib
+    else
+        warn("[WindUI] Không tải được dist/main.lua, dùng main_example.lua dự phòng")
+        loadstring(universalHttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/refs/heads/main/main_example.lua"))()
+        return
+    end
+end
+
+------------------------------------------------------------
+-- 3) TẠO WINDOW
+------------------------------------------------------------
+
+local Services = {
+    ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage")),
+    InsertService     = cloneref(game:GetService("InsertService")),
+    HttpService       = cloneref(game:GetService("HttpService")),
+    Workspace         = cloneref(game:GetService("Workspace")),
+    Players           = cloneref(game:GetService("Players")),
+}
+
+local Window = WindUI:CreateWindow({
+    Title  = ".ftgs hub | Universal",
+    Author = "Executor: " .. Executor,
+    Folder = "ftgshub",
+    Icon   = "box",
+    NewElements = true,
+    HideSearchBar = false,
+    OpenButton = {
+        Title = "Open .ftgs hub",
+        CornerRadius = UDim.new(1, 0),
+        StrokeThickness = 3,
+        Enabled = true,
+        Draggable = true,
+        OnlyMobile = false,
+        Scale = 0.5,
+        Color = ColorSequence.new(
+            Color3.fromHex("#30FF6A"),
+            Color3.fromHex("#e7ff2f")
+        ),
+    },
+    Topbar = {
+        Height = 44,
+        ButtonsType = "Mac",
+    },
+})
+
+Window:Tag({
+    Title = "v" .. (WindUI.Version or "?"),
+    Icon  = "github",
+    Color = Color3.fromHex("#1c1c1c"),
+    Border = true,
+})
+
+Window:Tag({
+    Title = Executor,
+    Icon  = "cpu",
+    Color = Color3.fromHex("#257AF7"),
+    Border = true,
+})
+
+------------------------------------------------------------
+-- 4) MODELS TAB - UNIVERSAL MODEL LOADER
+------------------------------------------------------------
+
+local ModelsTab = Window:Tab({ Title = "Models", Icon = "box" })
+
+ModelsTab:Section({ Title = "Tải Model từ Asset ID" })
+
+local currentAssetId = ""
+
+ModelsTab:Input({
+    Title = "Model Asset ID",
+    Desc  = "Nhập ID của model trên Roblox",
+    Placeholder = "VD: 1234567890",
+    Callback = function(value)
+        currentAssetId = value or ""
+    end
+})
+
+local spawnAtPlayer = true
+ModelsTab:Toggle({
+    Title = "Spawn tại vị trí Player",
+    Desc  = "Tắt = spawn tại (0, 50, 0)",
+    Default = true,
+    Callback = function(v) spawnAtPlayer = v end
+})
+
+local function loadModelUniversal(assetId)
+    local methods = {
+        function()
+            local fn = (game.GetObjects and function() return game:GetObjects("rbxassetid://"..assetId) end)
+                    or (getobjects and function() return getobjects("rbxassetid://"..assetId) end)
+                    or (getcustomasset and nil)
+            if fn then
+                local objs = fn()
+                if objs and objs[1] then return objs[1] end
+            end
+        end,
+        function()
+            return Services.InsertService:LoadAsset(tonumber(assetId))
+        end,
+        function()
+            if not (hasFs and getcustomasset) then return nil end
+            local url = "https://assetdelivery.roblox.com/v1/asset/?id=" .. assetId
+            local data = universalHttpGet(url)
+            if not data then return nil end
+            local path = "ftgshub_model_" .. assetId .. ".rbxm"
+            writefile(path, data)
+            local asset = getcustomasset(path)
+            local ok, m = pcall(function()
+                return game:GetObjects(asset)[1]
+            end)
+            if ok then return m end
+        end,
+    }
+
+    for i, m in ipairs(methods) do
+        local ok, result = pcall(m)
+        if ok and result then
+            return result, i
+        end
+    end
+    return nil
+end
+
+ModelsTab:Button({
+    Title = "Load Model",
+    Desc  = "Spawn model vào Workspace",
+    Icon  = "download",
+    Callback = function()
+        local id = currentAssetId:match("%d+")
+        if not id then
+            WindUI:Notify({ Title = "Lỗi", Content = "Asset ID không hợp lệ", Icon = "circle-x", Duration = 3 })
+            return
+        end
+
+        WindUI:Notify({ Title = "Đang tải", Content = "Asset ID: " .. id, Icon = "loader", Duration = 2 })
+
+        local model, methodUsed = loadModelUniversal(id)
+        if not model then
+            WindUI:Notify({
+                Title = "Thất bại",
+                Content = "Không tải được model. Executor có thể không hỗ trợ.",
+                Icon = "circle-x",
+                Duration = 4,
+            })
+            return
+        end
+
+        local spawnCFrame = CFrame.new(0, 50, 0)
+        if spawnAtPlayer then
+            local lp = Services.Players.LocalPlayer
+            local char = lp and lp.Character
+            local hrp = char and char:FindFirstChild("HumanoidRootPart")
+            if hrp then
+                spawnCFrame = hrp.CFrame * CFrame.new(0, 0, -10)
+            end
+        end
+
+        if model:IsA("Model") then
+            model:PivotTo(spawnCFrame)
+        elseif model:IsA("BasePart") then
+            model.CFrame = spawnCFrame
+        end
+
+        model.Name = "LoadedModel_" .. id
+        model.Parent = Services.Workspace
+
+        WindUI:Notify({
+            Title = "Thành công",
+            Content = ("Đã spawn model (method #%d)"):format(methodUsed),
+            Icon = "circle-check",
+            Duration = 3,
+        })
+    end
+})
+
+ModelsTab:Button({
+    Title = "Xóa tất cả Model đã load",
+    Icon  = "trash",
+    Callback = function()
+        local n = 0
+        for _, obj in ipairs(Services.Workspace:GetChildren()) do
+            if typeof(obj.Name) == "string" and obj.Name:find("^LoadedModel_") then
+                obj:Destroy()
+                n += 1
+            end
+        end
+        WindUI:Notify({
+            Title = "Đã dọn",
+            Content = ("Đã xóa %d model"):format(n),
+            Icon = "trash-2",
+            Duration = 2,
+        })
+    end
+})
+
+------------------------------------------------------------
+-- 5) GROW A GARDEN 2 - GAME SPECIFIC FEATURES
+------------------------------------------------------------
+
+local function isGrowAGarden2()
+    local hasFarm = Services.Workspace:FindFirstChild("Farm") ~= nil
+    local hasGameEvents = Services.ReplicatedStorage:FindFirstChild("GameEvents") ~= nil
+    return hasFarm and hasGameEvents
+end
+
+local GAGTab = Window:Tab({ Title = "Grow a Garden 2", Icon = "sprout" })
+
+GAGTab:Section({ Title = "Trạng thái Game" })
+
+GAGTab:Paragraph({
+    Title = "Game Detected",
+    Desc  = isGrowAGarden2() and "Grow a Garden 2 ✓" or "Không phát hiện (vẫn chạy thử được)",
+})
+
+GAGTab:Section({ Title = "Auto Harvest" })
+
+genv.ftgs_AutoHarvest = false
+genv.ftgs_AutoSell    = false
+
+local function getOwnedFarms()
+    local out = {}
+    local FarmRoot = Services.Workspace:FindFirstChild("Farm")
+    if not FarmRoot then return out end
+    local lp = Services.Players.LocalPlayer
+    if not lp then return out end
+
+    for _, farm in ipairs(FarmRoot:GetChildren()) do
+        local important = farm:FindFirstChild("Important")
+        local data      = important and important:FindFirstChild("Data")
+        local owner     = data and data:FindFirstChild("Owner")
+        if owner and owner.Value == lp.Name then
+            table.insert(out, farm)
+        end
+    end
+    if #out == 0 then
+        local char = lp.Character
+        local hrp = char and char:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            local nearest, bestDist
+            for _, farm in ipairs(FarmRoot:GetChildren()) do
+                local pivot = farm:GetPivot()
+                local d = (pivot.Position - hrp.Position).Magnitude
+                if not bestDist or d < bestDist then
+                    bestDist, nearest = d, farm
+                end
+            end
+            if nearest then table.insert(out, nearest) end
+        end
+    end
+    return out
+end
+
+local function getFruitsInFarm(farm)
+    local fruits = {}
+    local plantsFolder = farm:FindFirstChild("Important") and farm.Important:FindFirstChild("Plants_Physical")
+    if not plantsFolder then return fruits end
+    for _, plant in ipairs(plantsFolder:GetChildren()) do
+        local fruitsFolder = plant:FindFirstChild("Fruits")
+        if fruitsFolder then
+            for _, fruit in ipairs(fruitsFolder:GetChildren()) do
+                if fruit:IsA("Model") or fruit:IsA("BasePart") then
+                    table.insert(fruits, fruit)
+                end
+            end
+        end
+    end
+    return fruits
+end
+
+local function harvestFruit(fruit)
+    local prompt = fruit:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt and fireproximityprompt then
+        pcall(fireproximityprompt, prompt)
+        return true
+    end
+    local GameEvents = Services.ReplicatedStorage:FindFirstChild("GameEvents")
+    if GameEvents then
+        for _, name in ipairs({ "Collect_Fruit", "Harvest", "CollectFruit", "Harvest_Plant" }) do
+            local rem = GameEvents:FindFirstChild(name)
+            if rem and rem:IsA("RemoteEvent") then
+                pcall(function() rem:FireServer(fruit) end)
+                return true
+            elseif rem and rem:IsA("RemoteFunction") then
+                pcall(function() rem:InvokeServer(fruit) end)
+                return true
+            end
+        end
+    end
+    local part = fruit:IsA("Model") and (fruit.PrimaryPart or fruit:FindFirstChildWhichIsA("BasePart")) or fruit
+    if part and firetouchinterest then
+        local lp  = Services.Players.LocalPlayer
+        local hrp = lp.Character and lp.Character:FindFirstChild("HumanoidRootPart")
+        if hrp then
+            pcall(firetouchinterest, hrp, part, 0)
+            pcall(firetouchinterest, hrp, part, 1)
+            return true
+        end
+    end
+    return false
+end
+
+GAGTab:Toggle({
+    Title = "Auto Harvest",
+    Desc  = "Tự động thu hoạch fruit trong garden của bạn",
+    Default = false,
+    Callback = function(state)
+        genv.ftgs_AutoHarvest = state
+        if state then
+            WindUI:Notify({ Title = "Auto Harvest", Content = "Đã bật", Icon = "play", Duration = 2 })
+        else
+            WindUI:Notify({ Title = "Auto Harvest", Content = "Đã tắt", Icon = "pause", Duration = 2 })
+        end
+    end
+})
+
+local harvestInterval = 0.5
+GAGTab:Slider({
+    Title = "Tốc độ Harvest (giây)",
+    Step  = 0.1,
+    Value = { Min = 0.1, Max = 3, Default = 0.5 },
+    Callback = function(v) harvestInterval = v end
+})
+
+GAGTab:Button({
+    Title = "Harvest 1 lần (manual)",
+    Icon  = "hand",
+    Callback = function()
+        local total = 0
+        for _, farm in ipairs(getOwnedFarms()) do
+            for _, fruit in ipairs(getFruitsInFarm(farm)) do
+                if harvestFruit(fruit) then total = total + 1 end
+            end
+        end
+        WindUI:Notify({ Title = "Manual Harvest", Content = "Đã thu " .. total .. " fruit", Icon = "circle-check", Duration = 2 })
+    end
+})
+
+GAGTab:Section({ Title = "Auto Sell" })
+
+local function sellInventory()
+    local GameEvents = Services.ReplicatedStorage:FindFirstChild("GameEvents")
+    if not GameEvents then return false end
+
+    local candidates = { "Sell_Inventory", "SellInventory", "Sell_All", "SellAll", "Sell" }
+    for _, name in ipairs(candidates) do
+        local rem = GameEvents:FindFirstChild(name)
+        if rem then
+            local ok = pcall(function()
+                if rem:IsA("RemoteEvent") then
+                    rem:FireServer()
+                else
+                    rem:InvokeServer()
+                end
+            end)
+            if ok then return true end
+        end
+    end
+    return false
+end
+
+GAGTab:Toggle({
+    Title = "Auto Sell",
+    Desc  = "Tự động bán toàn bộ fruit trong inventory",
+    Default = false,
+    Callback = function(state)
+        genv.ftgs_AutoSell = state
+        if state then
+            WindUI:Notify({ Title = "Auto Sell", Content = "Đã bật", Icon = "play", Duration = 2 })
+        else
+            WindUI:Notify({ Title = "Auto Sell", Content = "Đã tắt", Icon = "pause", Duration = 2 })
+        end
+    end
+})
+
+local sellInterval = 30
+GAGTab:Slider({
+    Title = "Chu kỳ Auto Sell (giây)",
+    Step  = 5,
+    Value = { Min = 10, Max = 300, Default = 30 },
+    Callback = function(v) sellInterval = v end
+})
+
+GAGTab:Button({
+    Title = "Sell All ngay",
+    Icon  = "dollar-sign",
+    Callback = function()
+        local ok = sellInventory()
+        WindUI:Notify({
+            Title = ok and "Sell All" or "Lỗi",
+            Content = ok and "Đã gửi lệnh bán" or "Không tìm thấy RemoteEvent Sell",
+            Icon = ok and "circle-check" or "circle-x",
+            Duration = 3,
+        })
+    end
+})
+
+task.spawn(function()
+    while task.wait(harvestInterval) do
+        if genv.ftgs_AutoHarvest then
+            for _, farm in ipairs(getOwnedFarms()) do
+                if not genv.ftgs_AutoHarvest then break end
+                for _, fruit in ipairs(getFruitsInFarm(farm)) do
+                    if not genv.ftgs_AutoHarvest then break end
+                    pcall(harvestFruit, fruit)
+                end
+            end
+        end
+    end
+end)
+
+task.spawn(function()
+    while true do
+        task.wait(sellInterval)
+        if genv.ftgs_AutoSell then
+            pcall(sellInventory)
+        end
+    end
+end)
+
+------------------------------------------------------------
+-- 6) INFO TAB
+------------------------------------------------------------
+
+local InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
+
+InfoTab:Section({ Title = "Thông tin Executor" })
+
+InfoTab:Paragraph({
+    Title = "Executor",
+    Desc  = Executor,
+})
+
+InfoTab:Paragraph({
+    Title = "Platform",
+    Desc  = (function()
+        local plat = "PC"
+        local UIS = game:GetService("UserInputService")
+        if UIS.TouchEnabled and not UIS.MouseEnabled and not UIS.KeyboardEnabled then
+            plat = "Mobile (iOS/Android)"
+        elseif UIS.TouchEnabled and UIS.MouseEnabled then
+            plat = "Hybrid (PC + Touch)"
+        end
+        return plat
+    end)(),
+})
+
+InfoTab:Paragraph({
+    Title = "Filesystem support",
+    Desc  = hasFs and "Có (writefile/readfile)" or "Không",
+})
+
+InfoTab:Paragraph({
+    Title = "WindUI Version",
+    Desc  = tostring(WindUI.Version or "unknown"),
+})
+
+print(("[ftgs hub] Đã khởi tạo trên executor: %s"):format(Executor))
