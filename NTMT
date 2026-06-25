@@ -725,23 +725,20 @@ local buyAllGears = true
 local buyAmount   = 10
 local buyInterval = 1.5
 
-local BUY_SEED_NAMES = { "BuySeedStock", "Buy_Seed", "BuySeed", "PurchaseSeedStock", "PurchaseSeed" }
-local BUY_GEAR_NAMES = { "BuyGearStock", "Buy_Gear", "BuyGear", "PurchaseGearStock", "PurchaseGear" }
+-- CONFIRMED từ source GAG: GameEvents.BuySeedStock:FireServer("SeedName")
+-- GAG2 có thể dùng Networking module. Brute-force fire MỌI path → 1 path đúng sẽ work, các path khác fail silent
+local BUY_SEED_NAMES = { "BuySeedStock", "Buy_Seed", "BuySeed", "PurchaseSeedStock", "PurchaseSeed", "BuySeed_RE" }
+local BUY_GEAR_NAMES = { "BuyGearStock", "Buy_Gear", "BuyGear", "PurchaseGearStock", "PurchaseGear", "BuyGear_RE" }
+local BUY_SEED_NET_PATHS = {
+    {"Shop","BuySeedStock"}, {"Shop","BuySeed"}, {"Shop","Buy_Seed"}, {"Shop","BuySeed_RE"},
+    {"Garden","BuySeed"}, {"Garden","BuySeedStock"}, {"Garden","Buy_Seed"},
+}
+local BUY_GEAR_NET_PATHS = {
+    {"Shop","BuyGearStock"}, {"Shop","BuyGear"}, {"Shop","Buy_Gear"}, {"Shop","BuyGear_RE"},
+    {"Garden","BuyGear"}, {"Garden","BuyGearStock"}, {"Garden","Buy_Gear"},
+}
 
-local function findGameEventRemote(names)
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    if not GE then return nil end
-    for _, n in ipairs(names) do
-        local r = GE:FindFirstChild(n)
-        if r then return r end
-    end
-    return nil
-end
-
-local cachedBuySeedRemote = findGameEventRemote(BUY_SEED_NAMES)
-local cachedBuyGearRemote = findGameEventRemote(BUY_GEAR_NAMES)
-
-local function fireBuy(rem, name)
+local function fireOne(rem, name)
     if not rem then return false end
     if rem:IsA("RemoteEvent") then
         return pcall(function() rem:FireServer(name) end)
@@ -751,46 +748,45 @@ local function fireBuy(rem, name)
     return false
 end
 
-local function buySeed(name, amount)
-    local rem = cachedBuySeedRemote or findGameEventRemote(BUY_SEED_NAMES)
-    cachedBuySeedRemote = rem
-    if rem then
-        for _ = 1, (amount or 1) do fireBuy(rem, name) end
-        return true
-    end
-    if Networking then
-        for _, path in ipairs({ {"Shop","BuySeedStock"}, {"Shop","BuySeed"}, {"Garden","BuySeed"}, {"Shop","Buy_Seed"} }) do
-            local fn = (Networking[path[1]] or {})[path[2]]
-            if fn and fn.Fire then
-                for _ = 1, (amount or 1) do
-                    pcall(function() fn:Fire(name) end)
-                end
-                return true
+local function bruteForceBuy(name, remoteNames, netPaths)
+    local fired = 0
+    -- Path 1: ReplicatedStorage.GameEvents.<name>:FireServer(name)
+    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
+    if GE then
+        for _, n in ipairs(remoteNames) do
+            local r = GE:FindFirstChild(n)
+            if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then
+                if fireOne(r, name) then fired = fired + 1 end
             end
         end
     end
-    return false
+    -- Path 2: Networking.<Cat>.<Method>:Fire(name)
+    if Networking then
+        for _, path in ipairs(netPaths) do
+            local cat = Networking[path[1]]
+            local fn  = cat and cat[path[2]]
+            if fn and type(fn) == "table" and fn.Fire then
+                if pcall(function() fn:Fire(name) end) then fired = fired + 1 end
+            end
+        end
+    end
+    return fired
+end
+
+local function buySeed(name, amount)
+    local total = 0
+    for _ = 1, (amount or 1) do
+        total = total + bruteForceBuy(name, BUY_SEED_NAMES, BUY_SEED_NET_PATHS)
+    end
+    return total > 0
 end
 
 local function buyGear(name, amount)
-    local rem = cachedBuyGearRemote or findGameEventRemote(BUY_GEAR_NAMES)
-    cachedBuyGearRemote = rem
-    if rem then
-        for _ = 1, (amount or 1) do fireBuy(rem, name) end
-        return true
+    local total = 0
+    for _ = 1, (amount or 1) do
+        total = total + bruteForceBuy(name, BUY_GEAR_NAMES, BUY_GEAR_NET_PATHS)
     end
-    if Networking then
-        for _, path in ipairs({ {"Shop","BuyGearStock"}, {"Shop","BuyGear"}, {"Garden","BuyGear"}, {"Shop","Buy_Gear"} }) do
-            local fn = (Networking[path[1]] or {})[path[2]]
-            if fn and fn.Fire then
-                for _ = 1, (amount or 1) do
-                    pcall(function() fn:Fire(name) end)
-                end
-                return true
-            end
-        end
-    end
-    return false
+    return total > 0
 end
 
 GAGTab:Section({ Title = "Auto Buy Seed & Gear" })
@@ -879,41 +875,60 @@ GAGTab:Button({
     Title = "Mua 1 lần ngay (Seed + Gear)",
     Icon  = "shopping-cart",
     Callback = function()
-        local n = 0
+        local seedHits, gearHits = 0, 0
         for _, s in ipairs(SEEDS_LIST) do
             if buyAllSeeds or selectedSeeds[s] then
-                if buySeed(s, buyAmount) then n = n + 1 end
+                if buySeed(s, buyAmount) then seedHits = seedHits + 1 end
             end
         end
         for _, g in ipairs(GEARS_LIST) do
             if buyAllGears or selectedGears[g] then
-                if buyGear(g, buyAmount) then n = n + 1 end
+                if buyGear(g, buyAmount) then gearHits = gearHits + 1 end
             end
         end
-        WindUI:Notify({ Title = "Đã mua", Content = ("Đã fire %d lệnh"):format(n), Icon = "circle-check", Duration = 2 })
+        WindUI:Notify({
+            Title = "Đã mua",
+            Content = ("Seeds: %d | Gears: %d (mỗi loại fire mọi path)"):format(seedHits, gearHits),
+            Icon = "circle-check",
+            Duration = 3,
+        })
     end
 })
 
 GAGTab:Button({
-    Title = "Debug: Liệt kê Buy remote",
+    Title = "Debug: Liệt kê Buy remote (DOC TRONG CONSOLE)",
     Icon  = "search",
     Callback = function()
         local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-        if not GE then
-            WindUI:Notify({ Title = "GameEvents", Content = "Không tìm thấy folder", Icon = "circle-x", Duration = 4 })
-            return
-        end
-        local found = {}
-        for _, c in ipairs(GE:GetChildren()) do
-            local lname = c.Name:lower()
-            if lname:find("buy") or lname:find("purchase") or lname:find("shop") then
-                table.insert(found, c.Name)
+        local foundGE = {}
+        if GE then
+            for _, c in ipairs(GE:GetChildren()) do
+                local lname = c.Name:lower()
+                if lname:find("buy") or lname:find("purchase") or lname:find("shop") then
+                    table.insert(foundGE, c.Name .. "(" .. c.ClassName .. ")")
+                end
             end
         end
-        print("[NTMT HUB] Buy remotes:", table.concat(found, ", "))
+        local foundNet = {}
+        if Networking then
+            for k, v in pairs(Networking) do
+                if type(v) == "table" then
+                    for k2, _ in pairs(v) do
+                        local low = (k .. "." .. k2):lower()
+                        if low:find("buy") or low:find("shop") or low:find("purchase") then
+                            table.insert(foundNet, k .. "." .. k2)
+                        end
+                    end
+                end
+            end
+        end
+        print("===== BUY REMOTES =====")
+        print("GameEvents:", table.concat(foundGE, ", "))
+        print("Networking:", table.concat(foundNet, ", "))
+        print("=======================")
         WindUI:Notify({
-            Title = "Buy Remotes",
-            Content = #found > 0 and table.concat(found, ", ") or "Không có",
+            Title = "Buy remotes (xem F9)",
+            Content = ("GE: %d | Net: %d"):format(#foundGE, #foundNet),
             Icon = "info",
             Duration = 6,
         })
@@ -931,8 +946,9 @@ local plantMode     = "Below"
 local plantSpacing  = 6
 local cachedPlantRemote = nil
 
+-- CONFIRMED từ source: GameEvents.Plant_RE:FireServer(Position, "SeedName")
 local PLANT_REMOTE_NAMES = {
-    "Plant_RE", "PlantSeed", "Plant", "PlaceSeed", "PlaceItem", "PlantItem",
+    "Plant_RE", "PlantSeed", "PlantSeed_RE", "Plant", "PlaceSeed", "PlantItem",
 }
 
 local function findPlantRemote()
