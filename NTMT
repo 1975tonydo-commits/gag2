@@ -705,4 +705,158 @@ InfoTab:Button({
     end
 })
 
+--[[
+    NTMT HUB - Grow a Garden 2
+    Hỗ trợ: Delta X, Codex, Hydrogen, Arceus X, Fluxus, Synapse X, Krnl, Wave, ...
+]]
+------------------------------------------------------------
+-- (Giữ nguyên phần 1 đến 8 của bạn - UNIVERSAL, WindUI, Services, Window, Helpers...)
+-- ... (paste nguyên phần 1-8 của bạn vào đây) ...
+
+------------------------------------------------------------
+-- 9) AUTO BUY - ĐÃ UPDATE THEO YÊU CẦU
+------------------------------------------------------------
+local SEEDS_LIST = {
+    "Carrot", "Strawberry", "Blueberry", "Tulip", "Tomato", "Apple", "Bamboo",
+    "Corn", "Cactus", "Pineapple", "Mushroom", "GreenBean", "Banana", "Grape",
+    "Coconut", "Mango", "Acorn", "Cherry", "Sunflower", "Lotus", "Pomegranate",
+    "PoisonApple", "DragonFruit", "HornedMelon", "BabyCactus", "GlowMushroom",
+    "VenusFlytrap", "GhostPepper", "MoonBloom", "VenomSpitter", "DragonBreath",
+}
+
+local GEARS_LIST = {
+    "CommonWateringCan", "CommonSprinkler", "Sign", "UncommonSprinkler",
+    "RareSprinkler", "Trowel", "BasicTrap", "AdvancedShovel", "JumpMushroom",
+    "SpeedMushroom", "SuperWateringCan", "LegendarySprinkler", "PowerHose",
+    "FreezeRay", "VineWrapper", "RainbowCarpet", "Gnome", "Wheelbarrow",
+    "PlayerMagnet", "StrawberrySniper", "SuperSprinkler"
+}
+
+genv.ftgs_AutoBuySeed = false
+genv.ftgs_AutoBuyGear = false
+local selectedSeeds = {}
+local selectedGears = {}
+local buyAllSeeds = true
+local buyAllGears = true
+local buyAmount = 15
+local buyInterval = 1.4
+
+local function buySeed(name, amount)
+    pcall(function()
+        local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
+        if GE and GE:FindFirstChild("Buy_Seed") then
+            GE.Buy_Seed:FireServer(name, amount or buyAmount)
+        elseif Networking then
+            local fn = (Networking.Shop or Networking.Garden or Networking).BuySeed
+            if fn and fn.Fire then fn:Fire(name, amount or buyAmount) end
+        end
+    end)
+end
+
+local function buyGear(name, amount)
+    pcall(function()
+        local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
+        if GE and GE:FindFirstChild("Buy_Gear") then
+            GE.Buy_Gear:FireServer(name, amount or buyAmount)
+        elseif Networking then
+            local fn = (Networking.Shop or Networking.Garden or Networking).BuyGear
+            if fn and fn.Fire then fn:Fire(name, amount or buyAmount) end
+        end
+    end)
+end
+
+-- ==================== UI AUTO BUY ====================
+GAGTab:Section({ Title = "Auto Buy Seed & Gear" })
+
+GAGTab:Toggle({
+    Title = "Auto Buy Seed",
+    Default = false,
+    Callback = function(state) genv.ftgs_AutoBuySeed = state end
+})
+
+GAGTab:Toggle({
+    Title = "Mua TẤT CẢ Seed (Stock)",
+    Desc = "Mua tất cả seed đang có trong shop",
+    Default = true,
+    Callback = function(v) buyAllSeeds = v end
+})
+
+GAGTab:Dropdown({
+    Title = "Chọn Seed muốn mua",
+    Values = SEEDS_LIST,
+    Value = {},
+    Multi = true,
+    AllowNone = true,
+    Callback = function(selected)
+        selectedSeeds = {}
+        if type(selected) == "table" then
+            for _, s in ipairs(selected) do selectedSeeds[s] = true end
+        end
+    end
+})
+
+GAGTab:Toggle({
+    Title = "Auto Buy Gear",
+    Default = false,
+    Callback = function(state) genv.ftgs_AutoBuyGear = state end
+})
+
+GAGTab:Toggle({
+    Title = "Mua TẤT CẢ Gear (Stock)",
+    Desc = "Mua tất cả gear đang có trong shop",
+    Default = true,
+    Callback = function(v) buyAllGears = v end
+})
+
+GAGTab:Dropdown({
+    Title = "Chọn Gear muốn mua",
+    Values = GEARS_LIST,
+    Value = {},
+    Multi = true,
+    AllowNone = true,
+    Callback = function(selected)
+        selectedGears = {}
+        if type(selected) == "table" then
+            for _, g in ipairs(selected) do selectedGears[g] = true end
+        end
+    end
+})
+
+GAGTab:Slider({
+    Title = "Số lượng mua mỗi lần",
+    Step = 1,
+    Value = { Min = 1, Max = 100, Default = 15 },
+    Callback = function(v) buyAmount = v end
+})
+
+GAGTab:Slider({
+    Title = "Chu kỳ Auto Buy (giây)",
+    Step = 0.2,
+    Value = { Min = 0.8, Max = 5, Default = 1.4 },
+    Callback = function(v) buyInterval = v end
+})
+
+-- ==================== AUTO BUY LOOP ====================
+task.spawn(function()
+    while true do
+        task.wait(buyInterval)
+        
+        if genv.ftgs_AutoBuySeed then
+            for _, s in ipairs(SEEDS_LIST) do
+                if buyAllSeeds or selectedSeeds[s] then
+                    buySeed(s, buyAmount)
+                end
+            end
+        end
+        
+        if genv.ftgs_AutoBuyGear then
+            for _, g in ipairs(GEARS_LIST) do
+                if buyAllGears or selectedGears[g] then
+                    buyGear(g, 1)
+                end
+            end
+        end
+    end
+end)
+
 print(("[NTMT HUB] Đã khởi tạo trên executor: %s"):format(Executor))
