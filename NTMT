@@ -67,6 +67,7 @@ local Services = {
 
 local LocalPlayer = Services.Players.LocalPlayer
 
+-- Game-specific: Gardens folder + Networking module
 local Gardens = Services.Workspace:WaitForChild("Gardens", 10)
 
 local Networking, FruitValueCalc
@@ -146,6 +147,7 @@ local function getOwnedPlot()
     return nil
 end
 
+-- Cache plot - server tự check Age, không cần check client-side
 local cachedOwnedPlot
 local function getCachedOwnedPlot()
     if cachedOwnedPlot and cachedOwnedPlot.Parent then return cachedOwnedPlot end
@@ -153,12 +155,15 @@ local function getCachedOwnedPlot()
     return cachedOwnedPlot
 end
 
+-- Refresh cache mỗi 10s đề phòng plot thay đổi
 task.spawn(function()
     while task.wait(10) do
         cachedOwnedPlot = getOwnedPlot()
     end
 end)
 
+-- Lấy TẤT CẢ fruit/plant trong plot (không filter Age - server tự reject)
+-- Work mọi khoảng cách vì chỉ fire remote, không cần character ở gần
 local function getAllPlantsInPlot()
     local out = {}
     local plot = getCachedOwnedPlot()
@@ -182,6 +187,7 @@ local function getAllPlantsInPlot()
     return out
 end
 
+-- Alias để giữ tương thích
 local getHarvestablePlants = getAllPlantsInPlot
 
 local function harvestPlant(plant)
@@ -213,7 +219,7 @@ local harvestInterval = 0.05
 
 GAGTab:Toggle({
     Title = "Auto Harvest",
-    Desc  = "Tự thu hoạch fruit chín - work mọi khoảng cách",
+    Desc  = "Tự động thu hoạch fruit chín (dùng Networking.Garden.CollectFruit)",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoHarvest = state
@@ -259,6 +265,7 @@ GAGTab:Section({ Title = "Auto Sell" })
 
 local sellInterval = 0.1
 
+-- WHITELIST chính xác - chỉ fire đúng remote, tránh remote nào TP người chơi
 local SELL_REMOTE_NAMES = {
     "Sell_Inventory", "SellInventory", "Sell_All", "SellAll", "SellItems",
 }
@@ -309,6 +316,7 @@ end
 
 rebuildSellCache()
 
+-- Sell siêu nhanh: chỉ fire whitelist remote, không TP
 local function sellInventory()
     for _, rem in ipairs(cachedSellRemotes) do
         pcall(function()
@@ -595,30 +603,81 @@ local buyAllGears  = true
 local buyAmount    = 10
 local buyInterval  = 1.6
 
-local function buySeed(name, amount)
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    local rem = GE and GE:FindFirstChild("Buy_Seed")
-    if rem then pcall(function() rem:FireServer(name, amount) end); return end
+local function fireRemote(rem, ...)
+    if not rem then return false end
+    local ok = false
+    if rem:IsA("RemoteEvent") then
+        ok = pcall(function() rem:FireServer(...) end)
+    elseif rem:IsA("RemoteFunction") then
+        ok = pcall(function() rem:InvokeServer(...) end)
+    end
+    return ok
+end
 
+local BUY_SEED_REMOTE_NAMES = {
+    "BuySeedStock", "Buy_Seed", "BuySeed", "PurchaseSeedStock", "PurchaseSeed",
+}
+local BUY_GEAR_REMOTE_NAMES = {
+    "BuyGearStock", "Buy_Gear", "BuyGear", "PurchaseGearStock", "PurchaseGear",
+}
+
+local function findInGameEvents(names)
+    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
+    if not GE then return nil end
+    for _, n in ipairs(names) do
+        local r = GE:FindFirstChild(n)
+        if r then return r end
+    end
+    return nil
+end
+
+local cachedBuySeedRemote = findInGameEvents(BUY_SEED_REMOTE_NAMES)
+local cachedBuyGearRemote = findInGameEvents(BUY_GEAR_REMOTE_NAMES)
+
+local function buySeed(name, amount)
+    local rem = cachedBuySeedRemote or findInGameEvents(BUY_SEED_REMOTE_NAMES)
+    cachedBuySeedRemote = rem
+    if rem then
+        for _ = 1, (amount or 1) do
+            fireRemote(rem, name)
+        end
+        return true
+    end
     if Networking then
-        for _, path in ipairs({ { "Garden", "BuySeed" }, { "Shop", "BuySeed" }, { "Shop", "Buy_Seed" } }) do
+        for _, path in ipairs({ {"Shop","BuySeedStock"}, {"Shop","BuySeed"}, {"Garden","BuySeed"}, {"Shop","Buy_Seed"} }) do
             local fn = (Networking[path[1]] or {})[path[2]]
-            if fn and fn.Fire then pcall(function() fn:Fire(name, amount) end); return end
+            if fn and fn.Fire then
+                for _ = 1, (amount or 1) do
+                    pcall(function() fn:Fire(name) end)
+                end
+                return true
+            end
         end
     end
+    return false
 end
 
 local function buyGear(name, amount)
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    local rem = GE and GE:FindFirstChild("Buy_Gear")
-    if rem then pcall(function() rem:FireServer(name, amount) end); return end
-
+    local rem = cachedBuyGearRemote or findInGameEvents(BUY_GEAR_REMOTE_NAMES)
+    cachedBuyGearRemote = rem
+    if rem then
+        for _ = 1, (amount or 1) do
+            fireRemote(rem, name)
+        end
+        return true
+    end
     if Networking then
-        for _, path in ipairs({ { "Garden", "BuyGear" }, { "Shop", "BuyGear" }, { "Shop", "Buy_Gear" } }) do
+        for _, path in ipairs({ {"Shop","BuyGearStock"}, {"Shop","BuyGear"}, {"Garden","BuyGear"}, {"Shop","Buy_Gear"} }) do
             local fn = (Networking[path[1]] or {})[path[2]]
-            if fn and fn.Fire then pcall(function() fn:Fire(name, amount) end); return end
+            if fn and fn.Fire then
+                for _ = 1, (amount or 1) do
+                    pcall(function() fn:Fire(name) end)
+                end
+                return true
+            end
         end
     end
+    return false
 end
 
 GAGTab:Section({ Title = "Auto Buy Seed" })
@@ -639,26 +698,31 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Mua TẤT CẢ Seed",
-    Desc  = "Tắt = chỉ mua seed được chọn ở dropdown dưới",
+    Desc  = "Bật = mua hết. Tắt = mở dropdown chọn (nếu dropdown lỗi, bật cái này)",
     Default = true,
     Callback = function(v) buyAllSeeds = v end
 })
 
-GAGTab:Dropdown({
-    Title = "Chọn Seed muốn mua",
-    Values = SEEDS_LIST,
-    Value  = {},
-    Multi  = true,
-    AllowNone = true,
-    Callback = function(selected)
-        selectedSeeds = {}
-        if type(selected) == "table" then
-            for _, name in ipairs(selected) do
-                selectedSeeds[name] = true
+pcall(function()
+    GAGTab:Dropdown({
+        Title = "Chọn Seed muốn mua (Multi)",
+        Values = SEEDS_LIST,
+        Value  = nil,
+        Multi  = true,
+        AllowNone = true,
+        Callback = function(selected)
+            selectedSeeds = {}
+            if type(selected) == "table" then
+                for k, v in pairs(selected) do
+                    if type(v) == "string" then selectedSeeds[v] = true
+                    elseif type(k) == "string" and v then selectedSeeds[k] = true end
+                end
+            elseif type(selected) == "string" then
+                selectedSeeds[selected] = true
             end
         end
-    end
-})
+    })
+end)
 
 GAGTab:Section({ Title = "Auto Buy Gear" })
 
@@ -678,26 +742,31 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Mua TẤT CẢ Gear",
-    Desc  = "Tắt = chỉ mua gear được chọn ở dropdown dưới",
+    Desc  = "Bật = mua hết. Tắt = mở dropdown chọn (nếu dropdown lỗi, bật cái này)",
     Default = true,
     Callback = function(v) buyAllGears = v end
 })
 
-GAGTab:Dropdown({
-    Title = "Chọn Gear muốn mua",
-    Values = GEARS_LIST,
-    Value  = {},
-    Multi  = true,
-    AllowNone = true,
-    Callback = function(selected)
-        selectedGears = {}
-        if type(selected) == "table" then
-            for _, name in ipairs(selected) do
-                selectedGears[name] = true
+pcall(function()
+    GAGTab:Dropdown({
+        Title = "Chọn Gear muốn mua (Multi)",
+        Values = GEARS_LIST,
+        Value  = nil,
+        Multi  = true,
+        AllowNone = true,
+        Callback = function(selected)
+            selectedGears = {}
+            if type(selected) == "table" then
+                for k, v in pairs(selected) do
+                    if type(v) == "string" then selectedGears[v] = true
+                    elseif type(k) == "string" and v then selectedGears[k] = true end
+                end
+            elseif type(selected) == "string" then
+                selectedGears[selected] = true
             end
         end
-    end
-})
+    })
+end)
 
 GAGTab:Section({ Title = "Cài đặt mua" })
 
@@ -716,21 +785,47 @@ GAGTab:Slider({
 })
 
 GAGTab:Button({
-    Title = "Mua 1 lần ngay",
+    Title = "Mua 1 lần ngay (Seed + Gear)",
     Icon  = "shopping-cart",
     Callback = function()
         local n = 0
         for _, s in ipairs(SEEDS_LIST) do
             if buyAllSeeds or selectedSeeds[s] then
-                buySeed(s, buyAmount); n = n + 1
+                if buySeed(s, buyAmount) then n = n + 1 end
             end
         end
         for _, g in ipairs(GEARS_LIST) do
             if buyAllGears or selectedGears[g] then
-                buyGear(g, buyAmount); n = n + 1
+                if buyGear(g, buyAmount) then n = n + 1 end
             end
         end
         WindUI:Notify({ Title = "Đã mua", Content = ("Đã fire %d lệnh mua"):format(n), Icon = "circle-check", Duration = 2 })
+    end
+})
+
+GAGTab:Button({
+    Title = "Debug: Tìm Buy remote trong GameEvents",
+    Icon  = "search",
+    Callback = function()
+        local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
+        if not GE then
+            WindUI:Notify({ Title = "GameEvents", Content = "Không tìm thấy GameEvents folder", Icon = "circle-x", Duration = 4 })
+            return
+        end
+        local found = {}
+        for _, c in ipairs(GE:GetChildren()) do
+            local lname = c.Name:lower()
+            if lname:find("buy") or lname:find("purchase") or lname:find("shop") then
+                table.insert(found, c.Name)
+            end
+        end
+        print("[NTMT HUB] Buy remotes found:", table.concat(found, ", "))
+        WindUI:Notify({
+            Title = "Buy Remotes",
+            Content = #found > 0 and table.concat(found, ", ") or "Không tìm thấy remote nào",
+            Icon = "info",
+            Duration = 6,
+        })
     end
 })
 
@@ -742,56 +837,105 @@ GAGTab:Section({ Title = "Auto Collect Drops" })
 
 genv.ftgs_AutoCollect = false
 
-local collectInterval = 0.25
+local collectInterval = 0.4
 local collectReturn   = true
+local collectMaxRange = 250
 local collectKeywords = {
-    gold = true, rainbow = true, legend = true,
-    mythic = true, special = true, drop = true,
+    gold = true, rainbow = true, legend = false,
+    mythic = false, special = false, drop = true,
 }
 
-local function matchesCollectKeyword(name)
+-- Folder mà drops/items thật sự nằm trong, KHÔNG quét các plant trong Gardens
+local DROP_FOLDER_NAMES = {
+    "Drops", "DroppedItems", "Items", "Pickups", "WorldDrops", "Loot",
+}
+
+local function findDropFolders()
+    local result = {}
+    for _, name in ipairs(DROP_FOLDER_NAMES) do
+        local f = Services.Workspace:FindFirstChild(name)
+        if f then table.insert(result, f) end
+    end
+    return result
+end
+
+local function nameMatchesKeyword(name)
     name = name:lower()
     for k, enabled in pairs(collectKeywords) do
-        if enabled and name:find(k) then return true end
+        if enabled and name:find(k, 1, true) then return true end
     end
     return false
 end
 
-local function collectItem(item)
-    local root = item:FindFirstChildWhichIsA("BasePart", true) or (item:IsA("BasePart") and item) or item.PrimaryPart
-    local hrp  = getRoot(LocalPlayer)
+local function isValidDrop(item)
+    if not item or not item.Parent then return false end
+    -- Loại bỏ mọi thứ nằm trong Gardens (plant, fruit, decor)
+    if Gardens and item:IsDescendantOf(Gardens) then return false end
+    -- Không lấy chính player character
+    if LocalPlayer.Character and item:IsDescendantOf(LocalPlayer.Character) then return false end
+    -- Phải có ProximityPrompt thật sự để collect
+    local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if not prompt then return false end
+    local actionText = (prompt.ActionText or ""):lower()
+    local objectText = (prompt.ObjectText or ""):lower()
+    if not (actionText:find("pick") or actionText:find("collect") or actionText:find("nhặt")
+         or objectText:find("pick") or objectText:find("collect") or objectText:find("drop")
+         or nameMatchesKeyword(item.Name)) then
+        return false
+    end
+    return true, prompt
+end
+
+local function getRootPart(item)
+    if item:IsA("BasePart") then return item end
+    if item:IsA("Model") then return item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart") end
+    return item:FindFirstChildWhichIsA("BasePart", true)
+end
+
+local function collectItem(item, prompt)
+    local hrp = getRoot(LocalPlayer)
     if not hrp then return end
 
-    if root and root.Position then
-        pcall(function() hrp.CFrame = CFrame.new(root.Position + Vector3.new(0, 5, 0)) end)
-        task.wait(0.08)
-    end
+    local root = getRootPart(item)
+    if not root then return end
 
-    local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
+    -- Distance check để tránh collect xa vô lý
+    local dist = (root.Position - hrp.Position).Magnitude
+    if dist > collectMaxRange then return end
+
+    pcall(function() hrp.CFrame = CFrame.new(root.Position + Vector3.new(0, 3, 0)) end)
+    task.wait(0.06)
+
     if prompt and fireproximityprompt then
         pcall(fireproximityprompt, prompt, 0)
     end
+end
 
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    if GE then
-        for _, n in ipairs({ "Collect", "Pickup", "Harvest", "Collect_Item", "PickUp" }) do
-            local rem = GE:FindFirstChild(n)
-            if rem and rem:IsA("RemoteEvent") then
-                pcall(function() rem:FireServer(item) end)
+local function scanDrops()
+    local drops = {}
+    local folders = findDropFolders()
+    if #folders > 0 then
+        for _, folder in ipairs(folders) do
+            for _, item in ipairs(folder:GetChildren()) do
+                local ok, prompt = isValidDrop(item)
+                if ok then table.insert(drops, { item = item, prompt = prompt }) end
+            end
+        end
+    else
+        -- Không có drops folder → chỉ quét top-level workspace có ProximityPrompt
+        for _, item in ipairs(Services.Workspace:GetChildren()) do
+            if item:IsA("Model") or item:IsA("Tool") or item:IsA("BasePart") then
+                local ok, prompt = isValidDrop(item)
+                if ok then table.insert(drops, { item = item, prompt = prompt }) end
             end
         end
     end
-    if Networking then
-        for _, p in ipairs({ {"Garden","Collect"}, {"Garden","Pickup"}, {"Item","Collect"}, {"Item","Pickup"} }) do
-            local fn = (Networking[p[1]] or {})[p[2]]
-            if fn and fn.Fire then pcall(function() fn:Fire(item) end) end
-        end
-    end
+    return drops
 end
 
 GAGTab:Toggle({
-    Title = "Auto Collect (Gold/Rainbow/Drop)",
-    Desc  = "Tự nhặt seed Gold, Rainbow, item drop trên map",
+    Title = "Auto Collect Drops",
+    Desc  = "Chỉ collect item có ProximityPrompt 'Pickup/Collect'. Bỏ qua plant trong Gardens.",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoCollect = state
@@ -805,10 +949,18 @@ GAGTab:Toggle({
 })
 
 GAGTab:Slider({
-    Title = "Tốc độ Auto Collect (giây)",
+    Title = "Chu kỳ Auto Collect (giây)",
     Step  = 0.05,
-    Value = { Min = 0.1, Max = 3, Default = 0.25 },
+    Value = { Min = 0.2, Max = 3, Default = 0.4 },
     Callback = function(v) collectInterval = v end
+})
+
+GAGTab:Slider({
+    Title = "Khoảng cách tối đa (studs)",
+    Desc  = "Bỏ qua drop xa hơn khoảng này",
+    Step  = 10,
+    Value = { Min = 50, Max = 1000, Default = 250 },
+    Callback = function(v) collectMaxRange = v end
 })
 
 GAGTab:Toggle({
@@ -817,19 +969,16 @@ GAGTab:Toggle({
     Callback = function(v) collectReturn = v end
 })
 
-GAGTab:Dropdown({
-    Title = "Loại item muốn collect",
-    Values = { "gold", "rainbow", "legend", "mythic", "special", "drop" },
-    Value  = { "gold", "rainbow", "legend", "mythic", "special", "drop" },
-    Multi  = true,
-    AllowNone = true,
-    Callback = function(selected)
-        for k in pairs(collectKeywords) do collectKeywords[k] = false end
-        if type(selected) == "table" then
-            for _, k in ipairs(selected) do collectKeywords[k] = true end
-        end
-    end
-})
+GAGTab:Section({ Title = "Loại drop muốn collect" })
+
+for _, kw in ipairs({ "gold", "rainbow", "legend", "mythic", "special", "drop" }) do
+    local keyword = kw
+    GAGTab:Toggle({
+        Title = "Collect '" .. keyword .. "'",
+        Default = collectKeywords[keyword] == true,
+        Callback = function(v) collectKeywords[keyword] = v end
+    })
+end
 
 GAGTab:Button({
     Title = "Quét & Collect 1 lần ngay",
@@ -837,17 +986,34 @@ GAGTab:Button({
     Callback = function()
         local hrp = getRoot(LocalPlayer)
         local orig = hrp and hrp.CFrame
-        local n = 0
-        for _, item in ipairs(Services.Workspace:GetDescendants()) do
-            if item.Parent and matchesCollectKeyword(item.Name) then
-                collectItem(item)
-                n = n + 1
-            end
+        local drops = scanDrops()
+        for _, d in ipairs(drops) do
+            collectItem(d.item, d.prompt)
         end
         if collectReturn and orig and hrp then
             pcall(function() hrp.CFrame = orig end)
         end
-        WindUI:Notify({ Title = "Auto Collect", Content = ("Đã collect %d item"):format(n), Icon = "circle-check", Duration = 2 })
+        WindUI:Notify({
+            Title = "Auto Collect",
+            Content = ("Tìm thấy %d drop"):format(#drops),
+            Icon = #drops > 0 and "circle-check" or "info",
+            Duration = 2,
+        })
+    end
+})
+
+GAGTab:Button({
+    Title = "Debug: Liệt kê Drop Folders",
+    Icon  = "search",
+    Callback = function()
+        local folders = findDropFolders()
+        if #folders == 0 then
+            WindUI:Notify({ Title = "Drop Folders", Content = "Không tìm thấy folder drops/items trên map", Icon = "info", Duration = 4 })
+        else
+            local names = {}
+            for _, f in ipairs(folders) do table.insert(names, f.Name .. "(" .. #f:GetChildren() .. ")") end
+            WindUI:Notify({ Title = "Drop Folders", Content = table.concat(names, ", "), Icon = "info", Duration = 5 })
+        end
     end
 })
 
@@ -887,6 +1053,7 @@ GAGTab:Toggle({
 -- 12) MAIN LOOPS
 ------------------------------------------------------------
 
+-- Auto Harvest loop (dùng Networking.Garden.CollectFruit)
 task.spawn(function()
     while true do
         if genv.ftgs_AutoHarvest then
@@ -902,6 +1069,7 @@ task.spawn(function()
     end
 end)
 
+-- Auto Sell loop
 task.spawn(function()
     while true do
         task.wait(sellInterval)
@@ -911,6 +1079,7 @@ task.spawn(function()
     end
 end)
 
+-- Auto Steal loop
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -931,6 +1100,7 @@ task.spawn(function()
     end
 end)
 
+-- Auto Buy loop
 task.spawn(function()
     while true do
         task.wait(buyInterval)
@@ -951,22 +1121,22 @@ task.spawn(function()
     end
 end)
 
+-- Auto Collect loop
 task.spawn(function()
     while true do
         task.wait(collectInterval)
         if genv.ftgs_AutoCollect then
             local hrp = getRoot(LocalPlayer)
             local orig = hrp and hrp.CFrame
-            pcall(function()
-                for _, item in ipairs(Services.Workspace:GetDescendants()) do
+            local ok, drops = pcall(scanDrops)
+            if ok and drops and #drops > 0 then
+                for _, d in ipairs(drops) do
                     if not genv.ftgs_AutoCollect then break end
-                    if item.Parent and matchesCollectKeyword(item.Name) then
-                        collectItem(item)
-                    end
+                    pcall(collectItem, d.item, d.prompt)
                 end
-            end)
-            if collectReturn and orig and hrp then
-                pcall(function() hrp.CFrame = orig end)
+                if collectReturn and orig and hrp then
+                    pcall(function() hrp.CFrame = orig end)
+                end
             end
         end
     end
@@ -990,13 +1160,13 @@ InfoTab:Paragraph({
         return "PC"
     end)(),
 })
-InfoTab:Paragraph({ Title = "Networking module", Desc = Networking and "Loaded" or "NOT FOUND" })
-InfoTab:Paragraph({ Title = "FruitValueCalc",   Desc = FruitValueCalc and "Loaded" or "NOT FOUND" })
-InfoTab:Paragraph({ Title = "Gardens folder",   Desc = Gardens and "Found" or "NOT FOUND" })
+InfoTab:Paragraph({ Title = "Networking module", Desc = Networking and "Loaded ✓" or "NOT FOUND ✗" })
+InfoTab:Paragraph({ Title = "FruitValueCalc",   Desc = FruitValueCalc and "Loaded ✓" or "NOT FOUND" })
+InfoTab:Paragraph({ Title = "Gardens folder",   Desc = Gardens and "Found ✓" or "NOT FOUND ✗" })
 
 local nightStatus = InfoTab:Paragraph({
     Title = "Night Time",
-    Desc  = isNightTime() and "DEM" or "NGAY",
+    Desc  = isNightTime() and "ĐÊM 🌙" or "NGÀY ☀",
 })
 
 local plotStatus = InfoTab:Paragraph({
@@ -1007,7 +1177,7 @@ local plotStatus = InfoTab:Paragraph({
 task.spawn(function()
     while task.wait(2) do
         pcall(function()
-            nightStatus:SetDesc(isNightTime() and "DEM" or "NGAY")
+            nightStatus:SetDesc(isNightTime() and "ĐÊM 🌙" or "NGÀY ☀")
             local plot = getOwnedPlot()
             plotStatus:SetDesc(plot and ("Plot: " .. plot.Name) or "Không tìm thấy")
         end)
