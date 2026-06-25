@@ -57,6 +57,14 @@ end
 -- 3) SERVICES & GAME MODULES
 ------------------------------------------------------------
 
+-- Buy
+_G.AutoBuySeeds = false
+_G.AutoBuyGear = false
+_G.SelectedSeeds = {}
+_G.SelectedGear = {}
+_G.BuyAmount = 20
+_G.BuyInterval = 1.2
+
 local Services = {
     ReplicatedStorage = cloneref(game:GetService("ReplicatedStorage")),
     Workspace         = cloneref(game:GetService("Workspace")),
@@ -1051,10 +1059,55 @@ InfoTab:Button({
 })
 
 ------------------------------------------------------------
--- AUTO BUY THEO NETWORKING (Fix cho trường hợp của bạn)
+-- 10) PLAYER CONTROL (WalkSpeed + JumpPower)
+------------------------------------------------------------
+GAGTab:Section({ Title = "Player Control" })
+
+local currentWalkSpeed = 16
+local currentJumpPower = 50
+
+GAGTab:Slider({
+    Title = "Walk Speed",
+    Step = 1,
+    Value = { Min = 16, Max = 200, Default = 16 },
+    Callback = function(v)
+        currentWalkSpeed = v
+        local hum = getHumanoid(LocalPlayer)
+        if hum then hum.WalkSpeed = v end
+    end
+})
+
+GAGTab:Slider({
+    Title = "Jump Power",
+    Step = 1,
+    Value = { Min = 50, Max = 300, Default = 50 },
+    Callback = function(v)
+        currentJumpPower = v
+        local hum = getHumanoid(LocalPlayer)
+        if hum then hum.JumpPower = v end
+    end
+})
+
+GAGTab:Button({
+    Title = "Reset Speed & Jump",
+    Icon = "refresh-cw",
+    Callback = function()
+        currentWalkSpeed = 16
+        currentJumpPower = 50
+        local hum = getHumanoid(LocalPlayer)
+        if hum then
+            hum.WalkSpeed = 16
+            hum.JumpPower = 50
+        end
+        WindUI:Notify({ Title = "Reset", Content = "Đã reset tốc độ & nhảy", Icon = "circle-check", Duration = 2 })
+    end
+})
+
+------------------------------------------------------------
+------------------------------------------------------------
+-- 9) AUTO BUY - FIX MẠNH NHẤT (Brute Force)
 ------------------------------------------------------------
 local SEEDS_LIST = {"Carrot","Strawberry","Blueberry","Tulip","Tomato","Apple","Bamboo","Corn","Cactus","Pineapple","Mushroom","GreenBean","Banana","Grape","Coconut","Mango","Acorn","Cherry","Sunflower","Lotus","Pomegranate","PoisonApple","DragonFruit","HornedMelon","BabyCactus","GlowMushroom","VenusFlytrap","GhostPepper","MoonBloom","VenomSpitter","DragonBreath"}
-
 local GEARS_LIST = {"CommonWateringCan","CommonSprinkler","Sign","UncommonSprinkler","RareSprinkler","Trowel","BasicTrap","AdvancedShovel","JumpMushroom","SpeedMushroom","SuperWateringCan","LegendarySprinkler","PowerHose","FreezeRay","VineWrapper","RainbowCarpet","Gnome","Wheelbarrow","PlayerMagnet","StrawberrySniper","SuperSprinkler"}
 
 genv.ftgs_AutoBuySeed = false
@@ -1064,22 +1117,20 @@ local selectedGears = {}
 local buyAllSeeds = true
 local buyAllGears = true
 local buyAmount = 20
-local buyInterval = 1.2
+local buyInterval = 1.0
 
 local function buySeed(name, amount)
-    amount = amount or 20
+    amount = amount or buyAmount
     pcall(function()
-        -- Cố gắng mọi cách
         local GE = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
         if GE then
-            local rem = GE:FindFirstChild("Buy_Seed") or GE:FindFirstChild("PurchaseSeed") or GE:FindFirstChild("ShopBuy")
+            local rem = GE:FindFirstChild("Buy_Seed") or GE:FindFirstChild("PurchaseSeed") or GE:FindFirstChild("ShopBuy") or GE:FindFirstChild("BuySeed")
             if rem then
                 if rem:IsA("RemoteEvent") then rem:FireServer(name, amount)
                 else rem:InvokeServer(name, amount) end
                 return
             end
         end
-        
         if Networking and Networking.Shop then
             local shop = Networking.Shop
             if shop.BuySeed then shop.BuySeed:Fire(name, amount)
@@ -1094,7 +1145,7 @@ local function buyGear(name, amount)
     pcall(function()
         local GE = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
         if GE then
-            local rem = GE:FindFirstChild("Buy_Gear") or GE:FindFirstChild("PurchaseGear")
+            local rem = GE:FindFirstChild("Buy_Gear") or GE:FindFirstChild("PurchaseGear") or GE:FindFirstChild("BuyGear")
             if rem then
                 if rem:IsA("RemoteEvent") then rem:FireServer(name, amount)
                 else rem:InvokeServer(name, amount) end
@@ -1109,9 +1160,8 @@ local function buyGear(name, amount)
     end)
 end
 
--- ==================== UI & LOOP ====================
+-- ==================== UI ====================
 GAGTab:Section({ Title = "Auto Buy Seed & Gear" })
-
 GAGTab:Toggle({ Title = "Auto Buy Seed", Default = false, Callback = function(s) genv.ftgs_AutoBuySeed = s end })
 GAGTab:Toggle({ Title = "Mua TẤT CẢ Seed", Default = true, Callback = function(v) buyAllSeeds = v end })
 GAGTab:Dropdown({ Title = "Chọn Seed", Values = SEEDS_LIST, Multi = true, Callback = function(sel) selectedSeeds = {}; for _,v in pairs(sel) do selectedSeeds[v] = true end end })
@@ -1121,8 +1171,9 @@ GAGTab:Toggle({ Title = "Mua TẤT CẢ Gear", Default = true, Callback = functi
 GAGTab:Dropdown({ Title = "Chọn Gear", Values = GEARS_LIST, Multi = true, Callback = function(sel) selectedGears = {}; for _,v in pairs(sel) do selectedGears[v] = true end end })
 
 GAGTab:Slider({ Title = "Số lượng", Min = 1, Max = 100, Default = 20, Callback = function(v) buyAmount = v end })
-GAGTab:Slider({ Title = "Chu kỳ (giây)", Min = 0.8, Max = 3, Default = 1.2, Callback = function(v) buyInterval = v end })
+GAGTab:Slider({ Title = "Chu kỳ (giây)", Min = 0.8, Max = 3, Default = 1.0, Callback = function(v) buyInterval = v end })
 
+-- ==================== LOOP ====================
 task.spawn(function()
     while true do
         task.wait(buyInterval)
@@ -1139,6 +1190,71 @@ task.spawn(function()
     end
 end)
 
-print("✅ Auto Buy theo Networking Loaded")
+print("✅ Auto Buy Brute Force Loaded")
+
+------------------------------------------------------------
+-- 11) AUTO PLANT
+------------------------------------------------------------
+genv.ftgs_AutoPlant = false
+local plantInterval = 0.8
+local plantMode = "Below"  -- Below, Line, Circle
+
+GAGTab:Section({ Title = "Auto Plant" })
+
+GAGTab:Toggle({
+    Title = "Auto Plant",
+    Desc = "Tự động trồng seed (cần cầm seed trong tay)",
+    Default = false,
+    Callback = function(state)
+        genv.ftgs_AutoPlant = state
+        WindUI:Notify({
+            Title = "Auto Plant",
+            Content = state and "Đã bật" or "Đã tắt",
+            Icon = state and "play" or "pause",
+            Duration = 2,
+        })
+    end
+})
+
+GAGTab:Dropdown({
+    Title = "Chế độ Plant",
+    Values = {"Below", "Line", "Circle"},
+    Value = "Below",
+    Callback = function(v) plantMode = v end
+})
+
+GAGTab:Slider({
+    Title = "Tốc độ Plant (giây)",
+    Step = 0.1,
+    Value = { Min = 0.3, Max = 3, Default = 0.8 },
+    Callback = function(v) plantInterval = v end
+})
+
+-- Auto Plant Loop
+task.spawn(function()
+    while true do
+        task.wait(plantInterval)
+        if genv.ftgs_AutoPlant then
+            pcall(function()
+                local char = LocalPlayer.Character
+                if char and char:FindFirstChild("HumanoidRootPart") then
+                    local root = char.HumanoidRootPart
+                    
+                    if plantMode == "Below" then
+                        -- Trồng ngay dưới chân
+                        local seed = char:FindFirstChildOfClass("Tool") or LocalPlayer.Backpack:FindFirstChildOfClass("Tool")
+                        if seed then
+                            -- Fire plant logic (cần remote chính xác)
+                            local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
+                            if GE and GE:FindFirstChild("Plant") then
+                                GE.Plant:FireServer(root.Position)
+                            end
+                        end
+                    end
+                end
+            end)
+        end
+    end
+end)
 
 print(("[NTMT HUB] Đã khởi tạo trên executor: %s"):format(Executor))
