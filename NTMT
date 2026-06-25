@@ -1050,83 +1050,71 @@ InfoTab:Button({
     end
 })
 
--- ===================== AUTO BUY MODULE =====================
-local Services = {
-    ReplicatedStorage = game:GetService("ReplicatedStorage"),
-}
-local Networking = nil -- sẽ tự lấy nếu có
+------------------------------------------------------------
+-- AUTO BUY BRUTE FORCE (Fix khi Networking = nil)
+------------------------------------------------------------
+local SEEDS_LIST = {"Carrot","Strawberry","Blueberry","Tulip","Tomato","Apple","Bamboo","Corn","Cactus","Pineapple","Mushroom","GreenBean","Banana","Grape","Coconut","Mango","Acorn","Cherry","Sunflower","Lotus","Pomegranate","PoisonApple","DragonFruit","HornedMelon","BabyCactus","GlowMushroom","VenusFlytrap","GhostPepper","MoonBloom","VenomSpitter","DragonBreath"}
 
--- Lấy Networking nếu có
-pcall(function()
-    local Shared = Services.ReplicatedStorage:WaitForChild("SharedModules", 5)
-    if Shared then
-        local ok, mod = pcall(require, Shared:WaitForChild("Networking", 3))
-        if ok then Networking = mod end
+local GEARS_LIST = {"CommonWateringCan","CommonSprinkler","Sign","UncommonSprinkler","RareSprinkler","Trowel","BasicTrap","AdvancedShovel","JumpMushroom","SpeedMushroom","SuperWateringCan","LegendarySprinkler","PowerHose","FreezeRay","VineWrapper","RainbowCarpet","Gnome","Wheelbarrow","PlayerMagnet","StrawberrySniper","SuperSprinkler"}
+
+genv.ftgs_AutoBuySeed = false
+genv.ftgs_AutoBuyGear = false
+local selectedSeeds = {}
+local selectedGears = {}
+local buyAllSeeds = true
+local buyAllGears = true
+local buyAmount = 20
+local buyInterval = 1.0
+
+local function buyItem(name, amount, isSeed)
+    pcall(function()
+        local GE = game:GetService("ReplicatedStorage"):FindFirstChild("GameEvents")
+        if GE then
+            local names = isSeed and {"Buy_Seed","PurchaseSeed","ShopBuy","BuySeed"} or {"Buy_Gear","PurchaseGear","ShopBuy","BuyGear"}
+            for _, n in ipairs(names) do
+                local rem = GE:FindFirstChild(n)
+                if rem then
+                    if rem:IsA("RemoteEvent") then rem:FireServer(name, amount)
+                    else rem:InvokeServer(name, amount) end
+                    print("Fired", n, "for", name)
+                    return
+                end
+            end
+        end
+        print("Không tìm thấy remote cho", name)
+    end)
+end
+
+-- UI
+GAGTab:Section({ Title = "Auto Buy Seed & Gear" })
+
+GAGTab:Toggle({ Title = "Auto Buy Seed", Default = false, Callback = function(s) genv.ftgs_AutoBuySeed = s end })
+GAGTab:Toggle({ Title = "Mua TẤT CẢ Seed", Default = true, Callback = function(v) buyAllSeeds = v end })
+GAGTab:Dropdown({ Title = "Chọn Seed", Values = SEEDS_LIST, Multi = true, Callback = function(sel) selectedSeeds = {}; for _,v in pairs(sel) do selectedSeeds[v] = true end end })
+
+GAGTab:Toggle({ Title = "Auto Buy Gear", Default = false, Callback = function(s) genv.ftgs_AutoBuyGear = s end })
+GAGTab:Toggle({ Title = "Mua TẤT CẢ Gear", Default = true, Callback = function(v) buyAllGears = v end })
+GAGTab:Dropdown({ Title = "Chọn Gear", Values = GEARS_LIST, Multi = true, Callback = function(sel) selectedGears = {}; for _,v in pairs(sel) do selectedGears[v] = true end end })
+
+GAGTab:Slider({ Title = "Số lượng", Min = 1, Max = 100, Default = 20, Callback = function(v) buyAmount = v end })
+GAGTab:Slider({ Title = "Chu kỳ (giây)", Min = 0.8, Max = 3, Default = 1.0, Callback = function(v) buyInterval = v end })
+
+task.spawn(function()
+    while true do
+        task.wait(buyInterval)
+        if genv.ftgs_AutoBuySeed then
+            for _, s in ipairs(SEEDS_LIST) do
+                if buyAllSeeds or selectedSeeds[s] then buyItem(s, buyAmount, true) end
+            end
+        end
+        if genv.ftgs_AutoBuyGear then
+            for _, g in ipairs(GEARS_LIST) do
+                if buyAllGears or selectedGears[g] then buyItem(g, 1, false) end
+            end
+        end
     end
 end)
 
-local SEEDS_LIST = {
-    "Carrot", "Strawberry", "Blueberry", "Tulip", "Tomato", "Apple", "Bamboo",
-    "Corn", "Cactus", "Pineapple", "Mushroom", "GreenBean", "Banana", "Grape",
-    "Coconut", "Mango", "Acorn", "Cherry", "Sunflower", "Lotus", "Pomegranate",
-    "PoisonApple", "DragonFruit", "HornedMelon", "BabyCactus", "GlowMushroom",
-    "VenusFlytrap", "GhostPepper", "MoonBloom", "VenomSpitter", "DragonBreath"
-}
-
-local GEARS_LIST = {
-    "CommonWateringCan", "CommonSprinkler", "Sign", "UncommonSprinkler",
-    "RareSprinkler", "Trowel", "BasicTrap", "AdvancedShovel", "JumpMushroom",
-    "SpeedMushroom", "SuperWateringCan", "LegendarySprinkler", "PowerHose",
-    "FreezeRay", "VineWrapper", "RainbowCarpet", "Gnome", "Wheelbarrow",
-    "PlayerMagnet", "StrawberrySniper", "SuperSprinkler"
-}
-
-local function buySeed(name, amount)
-    amount = amount or 20
-    pcall(function()
-        local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-        if GE then
-            local rem = GE:FindFirstChild("Buy_Seed") or GE:FindFirstChild("PurchaseSeed") or GE:FindFirstChild("ShopBuy")
-            if rem then
-                if rem:IsA("RemoteEvent") then rem:FireServer(name, amount)
-                else rem:InvokeServer(name, amount) end
-                return
-            end
-        end
-        if Networking then
-            local shop = Networking.Shop or Networking.Garden or Networking
-            if shop.BuySeed then shop.BuySeed:Fire(name, amount)
-            elseif shop.Buy_Seed then shop.Buy_Seed:Fire(name, amount)
-            elseif shop.PurchaseSeed then shop.PurchaseSeed:Fire(name, amount) end
-        end
-    end)
-end
-
-local function buyGear(name, amount)
-    amount = amount or 1
-    pcall(function()
-        local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-        if GE then
-            local rem = GE:FindFirstChild("Buy_Gear") or GE:FindFirstChild("PurchaseGear")
-            if rem then
-                if rem:IsA("RemoteEvent") then rem:FireServer(name, amount)
-                else rem:InvokeServer(name, amount) end
-                return
-            end
-        end
-        if Networking then
-            local shop = Networking.Shop or Networking.Garden or Networking
-            if shop.BuyGear then shop.BuyGear:Fire(name, amount)
-            elseif shop.Buy_Gear then shop.Buy_Gear:Fire(name, amount) end
-        end
-    end)
-end
-
--- ==================== SỬ DỤNG ====================
--- Ví dụ dùng:
--- buySeed("GreenBean", 30)
--- buyGear("SuperWateringCan", 1)
-
-print("✅ Auto Buy Module Loaded")
+print("✅ Auto Buy Brute Force Loaded")
 
 print(("[NTMT HUB] Đã khởi tạo trên executor: %s"):format(Executor))
