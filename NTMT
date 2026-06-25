@@ -146,22 +146,16 @@ local function getOwnedPlot()
     return nil
 end
 
-local cachedOwnedPlot
-local function getCachedOwnedPlot()
-    if cachedOwnedPlot and cachedOwnedPlot.Parent then return cachedOwnedPlot end
-    cachedOwnedPlot = getOwnedPlot()
-    return cachedOwnedPlot
+local function isGrown(plant)
+    local maxAge = plant:GetAttribute("MaxAge")
+    local currentAge = plant:GetAttribute("Age")
+    if maxAge == nil or currentAge == nil then return false end
+    return currentAge >= maxAge
 end
 
-task.spawn(function()
-    while task.wait(10) do
-        cachedOwnedPlot = getOwnedPlot()
-    end
-end)
-
-local function getAllPlantsInPlot()
+local function getHarvestablePlants()
     local out = {}
-    local plot = getCachedOwnedPlot()
+    local plot = getOwnedPlot()
     if not plot then return out end
 
     local plantsFolder = plot:FindFirstChild("Plants")
@@ -171,18 +165,18 @@ local function getAllPlantsInPlot()
         local fruitsFolder = plant:FindFirstChild("Fruits")
         if fruitsFolder then
             for _, fruit in ipairs(fruitsFolder:GetChildren()) do
-                if fruit:IsA("Model") and fruit:GetAttribute("PlantId") then
+                if fruit:IsA("Model") and isGrown(fruit) then
                     table.insert(out, fruit)
                 end
             end
-        elseif plant:IsA("Model") and plant:GetAttribute("PlantId") then
-            table.insert(out, plant)
+        else
+            if plant:IsA("Model") and isGrown(plant) then
+                table.insert(out, plant)
+            end
         end
     end
     return out
 end
-
-local getHarvestablePlants = getAllPlantsInPlot
 
 local function harvestPlant(plant)
     if not plant or not Networking then return false end
@@ -213,7 +207,7 @@ local harvestInterval = 0.05
 
 GAGTab:Toggle({
     Title = "Auto Harvest",
-    Desc  = "Tự thu hoạch fruit chín - work mọi khoảng cách",
+    Desc  = "Tự động thu hoạch fruit chín",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoHarvest = state
@@ -259,15 +253,6 @@ GAGTab:Section({ Title = "Auto Sell" })
 
 local sellInterval = 0.1
 
-local SELL_REMOTE_NAMES = {
-    "Sell_Inventory", "SellInventory", "Sell_All", "SellAll", "SellItems",
-}
-local SELL_NETWORKING_PATHS = {
-    { "Sell", "Sell" }, { "Sell", "SellAll" }, { "Sell", "SellInventory" },
-    { "Garden", "Sell" }, { "Garden", "SellAll" }, { "Garden", "SellInventory" },
-    { "Inventory", "Sell" }, { "Inventory", "SellAll" },
-}
-
 local cachedSellRemotes  = {}
 local cachedSellNetworks = {}
 
@@ -275,39 +260,35 @@ local function rebuildSellCache()
     table.clear(cachedSellRemotes)
     table.clear(cachedSellNetworks)
 
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    if GE then
-        for _, name in ipairs(SELL_REMOTE_NAMES) do
-            local rem = GE:FindFirstChild(name)
-            if rem and (rem:IsA("RemoteEvent") or rem:IsA("RemoteFunction")) then
-                table.insert(cachedSellRemotes, rem)
-            end
-        end
-    end
-
     for _, obj in ipairs(Services.ReplicatedStorage:GetDescendants()) do
-        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-            for _, name in ipairs(SELL_REMOTE_NAMES) do
-                if obj.Name == name and not table.find(cachedSellRemotes, obj) then
-                    table.insert(cachedSellRemotes, obj)
-                    break
-                end
-            end
+        if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) and obj.Name:lower():find("sell") then
+            table.insert(cachedSellRemotes, obj)
         end
     end
 
     if Networking then
-        for _, path in ipairs(SELL_NETWORKING_PATHS) do
-            local cat = Networking[path[1]]
-            local fn  = cat and cat[path[2]]
-            if fn and type(fn) == "table" and fn.Fire then
-                table.insert(cachedSellNetworks, fn)
+        local function walk(tbl, depth)
+            if depth > 4 or type(tbl) ~= "table" then return end
+            for k, v in pairs(tbl) do
+                if type(k) == "string" and k:lower():find("sell") and type(v) == "table" and v.Fire then
+                    table.insert(cachedSellNetworks, v)
+                end
+                if type(v) == "table" and v ~= tbl then
+                    pcall(walk, v, depth + 1)
+                end
             end
         end
+        pcall(walk, Networking, 1)
     end
 end
 
 rebuildSellCache()
+
+Services.ReplicatedStorage.DescendantAdded:Connect(function(d)
+    if (d:IsA("RemoteEvent") or d:IsA("RemoteFunction")) and d.Name:lower():find("sell") then
+        table.insert(cachedSellRemotes, d)
+    end
+end)
 
 local function sellInventory()
     for _, rem in ipairs(cachedSellRemotes) do
@@ -567,292 +548,7 @@ GAGTab:Button({
 })
 
 ------------------------------------------------------------
--- 9) UI - AUTO BUY SEED & GEAR
-------------------------------------------------------------
-
-local SEEDS_LIST = {
-    "Carrot", "Strawberry", "Blueberry", "Tulip", "Tomato", "Apple", "Bamboo",
-    "Corn", "Cactus", "Pineapple", "Mushroom", "GreenBean", "Banana", "Grape",
-    "Coconut", "Mango", "Acorn", "Cherry", "Sunflower", "Lotus", "Pomegranate",
-    "PoisonApple", "DragonFruit", "HornedMelon", "BabyCactus", "GlowMushroom",
-    "VenusFlytrap", "GhostPepper", "MoonBloom", "VenomSpitter", "DragonBreath",
-}
-
-local GEARS_LIST = {
-    "CommonWateringCan", "CommonSprinkler", "Sign", "UncommonSprinkler",
-    "RareSprinkler", "Trowel", "BasicTrap", "AdvancedShovel", "JumpMushroom",
-    "SpeedMushroom", "SuperWateringCan", "LegendarySprinkler", "PowerHose",
-    "FreezeRay", "VineWrapper", "RainbowCarpet", "Gnome", "Wheelbarrow",
-}
-
-genv.ftgs_AutoBuySeed = false
-genv.ftgs_AutoBuyGear = false
-
-local selectedSeeds = {}
-local selectedGears = {}
-local buyAllSeeds  = true
-local buyAllGears  = true
-local buyAmount    = 10
-local buyInterval  = 1.6
-
-local function buySeed(name, amount)
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    local rem = GE and GE:FindFirstChild("Buy_Seed")
-    if rem then pcall(function() rem:FireServer(name, amount) end); return end
-
-    if Networking then
-        for _, path in ipairs({ { "Garden", "BuySeed" }, { "Shop", "BuySeed" }, { "Shop", "Buy_Seed" } }) do
-            local fn = (Networking[path[1]] or {})[path[2]]
-            if fn and fn.Fire then pcall(function() fn:Fire(name, amount) end); return end
-        end
-    end
-end
-
-local function buyGear(name, amount)
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    local rem = GE and GE:FindFirstChild("Buy_Gear")
-    if rem then pcall(function() rem:FireServer(name, amount) end); return end
-
-    if Networking then
-        for _, path in ipairs({ { "Garden", "BuyGear" }, { "Shop", "BuyGear" }, { "Shop", "Buy_Gear" } }) do
-            local fn = (Networking[path[1]] or {})[path[2]]
-            if fn and fn.Fire then pcall(function() fn:Fire(name, amount) end); return end
-        end
-    end
-end
-
-GAGTab:Section({ Title = "Auto Buy Seed" })
-
-GAGTab:Toggle({
-    Title = "Auto Buy Seed",
-    Default = false,
-    Callback = function(state)
-        genv.ftgs_AutoBuySeed = state
-        WindUI:Notify({
-            Title = "Auto Buy Seed",
-            Content = state and "Đã bật" or "Đã tắt",
-            Icon = state and "play" or "pause",
-            Duration = 2,
-        })
-    end
-})
-
-GAGTab:Toggle({
-    Title = "Mua TẤT CẢ Seed",
-    Desc  = "Tắt = chỉ mua seed được chọn ở dropdown dưới",
-    Default = true,
-    Callback = function(v) buyAllSeeds = v end
-})
-
-GAGTab:Dropdown({
-    Title = "Chọn Seed muốn mua",
-    Values = SEEDS_LIST,
-    Value  = {},
-    Multi  = true,
-    AllowNone = true,
-    Callback = function(selected)
-        selectedSeeds = {}
-        if type(selected) == "table" then
-            for _, name in ipairs(selected) do
-                selectedSeeds[name] = true
-            end
-        end
-    end
-})
-
-GAGTab:Section({ Title = "Auto Buy Gear" })
-
-GAGTab:Toggle({
-    Title = "Auto Buy Gear",
-    Default = false,
-    Callback = function(state)
-        genv.ftgs_AutoBuyGear = state
-        WindUI:Notify({
-            Title = "Auto Buy Gear",
-            Content = state and "Đã bật" or "Đã tắt",
-            Icon = state and "play" or "pause",
-            Duration = 2,
-        })
-    end
-})
-
-GAGTab:Toggle({
-    Title = "Mua TẤT CẢ Gear",
-    Desc  = "Tắt = chỉ mua gear được chọn ở dropdown dưới",
-    Default = true,
-    Callback = function(v) buyAllGears = v end
-})
-
-GAGTab:Dropdown({
-    Title = "Chọn Gear muốn mua",
-    Values = GEARS_LIST,
-    Value  = {},
-    Multi  = true,
-    AllowNone = true,
-    Callback = function(selected)
-        selectedGears = {}
-        if type(selected) == "table" then
-            for _, name in ipairs(selected) do
-                selectedGears[name] = true
-            end
-        end
-    end
-})
-
-GAGTab:Section({ Title = "Cài đặt mua" })
-
-GAGTab:Slider({
-    Title = "Số lượng / lần mua",
-    Step  = 1,
-    Value = { Min = 1, Max = 100, Default = 10 },
-    Callback = function(v) buyAmount = v end
-})
-
-GAGTab:Slider({
-    Title = "Chu kỳ Auto Buy (giây)",
-    Step  = 0.2,
-    Value = { Min = 1, Max = 30, Default = 1.6 },
-    Callback = function(v) buyInterval = v end
-})
-
-GAGTab:Button({
-    Title = "Mua 1 lần ngay",
-    Icon  = "shopping-cart",
-    Callback = function()
-        local n = 0
-        for _, s in ipairs(SEEDS_LIST) do
-            if buyAllSeeds or selectedSeeds[s] then
-                buySeed(s, buyAmount); n = n + 1
-            end
-        end
-        for _, g in ipairs(GEARS_LIST) do
-            if buyAllGears or selectedGears[g] then
-                buyGear(g, buyAmount); n = n + 1
-            end
-        end
-        WindUI:Notify({ Title = "Đã mua", Content = ("Đã fire %d lệnh mua"):format(n), Icon = "circle-check", Duration = 2 })
-    end
-})
-
-------------------------------------------------------------
--- 10) UI - AUTO COLLECT (Gold/Rainbow Seed + Item Drop)
-------------------------------------------------------------
-
-GAGTab:Section({ Title = "Auto Collect Drops" })
-
-genv.ftgs_AutoCollect = false
-
-local collectInterval = 0.25
-local collectReturn   = true
-local collectKeywords = {
-    gold = true, rainbow = true, legend = true,
-    mythic = true, special = true, drop = true,
-}
-
-local function matchesCollectKeyword(name)
-    name = name:lower()
-    for k, enabled in pairs(collectKeywords) do
-        if enabled and name:find(k) then return true end
-    end
-    return false
-end
-
-local function collectItem(item)
-    local root = item:FindFirstChildWhichIsA("BasePart", true) or (item:IsA("BasePart") and item) or item.PrimaryPart
-    local hrp  = getRoot(LocalPlayer)
-    if not hrp then return end
-
-    if root and root.Position then
-        pcall(function() hrp.CFrame = CFrame.new(root.Position + Vector3.new(0, 5, 0)) end)
-        task.wait(0.08)
-    end
-
-    local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt and fireproximityprompt then
-        pcall(fireproximityprompt, prompt, 0)
-    end
-
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    if GE then
-        for _, n in ipairs({ "Collect", "Pickup", "Harvest", "Collect_Item", "PickUp" }) do
-            local rem = GE:FindFirstChild(n)
-            if rem and rem:IsA("RemoteEvent") then
-                pcall(function() rem:FireServer(item) end)
-            end
-        end
-    end
-    if Networking then
-        for _, p in ipairs({ {"Garden","Collect"}, {"Garden","Pickup"}, {"Item","Collect"}, {"Item","Pickup"} }) do
-            local fn = (Networking[p[1]] or {})[p[2]]
-            if fn and fn.Fire then pcall(function() fn:Fire(item) end) end
-        end
-    end
-end
-
-GAGTab:Toggle({
-    Title = "Auto Collect (Gold/Rainbow/Drop)",
-    Desc  = "Tự nhặt seed Gold, Rainbow, item drop trên map",
-    Default = false,
-    Callback = function(state)
-        genv.ftgs_AutoCollect = state
-        WindUI:Notify({
-            Title = "Auto Collect",
-            Content = state and "Đã bật" or "Đã tắt",
-            Icon = state and "play" or "pause",
-            Duration = 2,
-        })
-    end
-})
-
-GAGTab:Slider({
-    Title = "Tốc độ Auto Collect (giây)",
-    Step  = 0.05,
-    Value = { Min = 0.1, Max = 3, Default = 0.25 },
-    Callback = function(v) collectInterval = v end
-})
-
-GAGTab:Toggle({
-    Title = "Quay về vị trí cũ sau khi collect",
-    Default = true,
-    Callback = function(v) collectReturn = v end
-})
-
-GAGTab:Dropdown({
-    Title = "Loại item muốn collect",
-    Values = { "gold", "rainbow", "legend", "mythic", "special", "drop" },
-    Value  = { "gold", "rainbow", "legend", "mythic", "special", "drop" },
-    Multi  = true,
-    AllowNone = true,
-    Callback = function(selected)
-        for k in pairs(collectKeywords) do collectKeywords[k] = false end
-        if type(selected) == "table" then
-            for _, k in ipairs(selected) do collectKeywords[k] = true end
-        end
-    end
-})
-
-GAGTab:Button({
-    Title = "Quét & Collect 1 lần ngay",
-    Icon  = "package",
-    Callback = function()
-        local hrp = getRoot(LocalPlayer)
-        local orig = hrp and hrp.CFrame
-        local n = 0
-        for _, item in ipairs(Services.Workspace:GetDescendants()) do
-            if item.Parent and matchesCollectKeyword(item.Name) then
-                collectItem(item)
-                n = n + 1
-            end
-        end
-        if collectReturn and orig and hrp then
-            pcall(function() hrp.CFrame = orig end)
-        end
-        WindUI:Notify({ Title = "Auto Collect", Content = ("Đã collect %d item"):format(n), Icon = "circle-check", Duration = 2 })
-    end
-})
-
-------------------------------------------------------------
--- 11) UI - TIỆN ÍCH
+-- 9) UI - TIỆN ÍCH
 ------------------------------------------------------------
 
 GAGTab:Section({ Title = "Tiện ích" })
@@ -884,7 +580,7 @@ GAGTab:Toggle({
 })
 
 ------------------------------------------------------------
--- 12) MAIN LOOPS
+-- 10) MAIN LOOPS
 ------------------------------------------------------------
 
 task.spawn(function()
@@ -931,49 +627,8 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
-    while true do
-        task.wait(buyInterval)
-        if genv.ftgs_AutoBuySeed then
-            for _, s in ipairs(SEEDS_LIST) do
-                if buyAllSeeds or selectedSeeds[s] then
-                    pcall(buySeed, s, buyAmount)
-                end
-            end
-        end
-        if genv.ftgs_AutoBuyGear then
-            for _, g in ipairs(GEARS_LIST) do
-                if buyAllGears or selectedGears[g] then
-                    pcall(buyGear, g, buyAmount)
-                end
-            end
-        end
-    end
-end)
-
-task.spawn(function()
-    while true do
-        task.wait(collectInterval)
-        if genv.ftgs_AutoCollect then
-            local hrp = getRoot(LocalPlayer)
-            local orig = hrp and hrp.CFrame
-            pcall(function()
-                for _, item in ipairs(Services.Workspace:GetDescendants()) do
-                    if not genv.ftgs_AutoCollect then break end
-                    if item.Parent and matchesCollectKeyword(item.Name) then
-                        collectItem(item)
-                    end
-                end
-            end)
-            if collectReturn and orig and hrp then
-                pcall(function() hrp.CFrame = orig end)
-            end
-        end
-    end
-end)
-
 ------------------------------------------------------------
--- 13) INFO / DEBUG TAB
+-- 11) INFO / DEBUG TAB
 ------------------------------------------------------------
 
 local InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
