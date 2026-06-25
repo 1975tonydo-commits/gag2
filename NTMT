@@ -28,7 +28,6 @@ local function universalHttpGet(url)
             return res.Body or res.body
         end
     end
-
     error("Không có HTTP function nào khả dụng trên executor: " .. tostring(Executor))
 end
 
@@ -66,8 +65,6 @@ local Services = {
 }
 
 local LocalPlayer = Services.Players.LocalPlayer
-
--- Game-specific: Gardens folder + Networking module
 local Gardens = Services.Workspace:WaitForChild("Gardens", 10)
 
 local Networking, FruitValueCalc
@@ -147,7 +144,6 @@ local function getOwnedPlot()
     return nil
 end
 
--- Cache plot - server tự check Age, không cần check client-side
 local cachedOwnedPlot
 local function getCachedOwnedPlot()
     if cachedOwnedPlot and cachedOwnedPlot.Parent then return cachedOwnedPlot end
@@ -155,20 +151,16 @@ local function getCachedOwnedPlot()
     return cachedOwnedPlot
 end
 
--- Refresh cache mỗi 10s đề phòng plot thay đổi
 task.spawn(function()
     while task.wait(10) do
         cachedOwnedPlot = getOwnedPlot()
     end
 end)
 
--- Lấy TẤT CẢ fruit/plant trong plot (không filter Age - server tự reject)
--- Work mọi khoảng cách vì chỉ fire remote, không cần character ở gần
 local function getAllPlantsInPlot()
     local out = {}
     local plot = getCachedOwnedPlot()
     if not plot then return out end
-
     local plantsFolder = plot:FindFirstChild("Plants")
     if not plantsFolder then return out end
 
@@ -187,18 +179,46 @@ local function getAllPlantsInPlot()
     return out
 end
 
--- Alias để giữ tương thích
 local getHarvestablePlants = getAllPlantsInPlot
+
+local function getPartFromObj(obj)
+    if not obj then return nil end
+    if obj:IsA("BasePart") then return obj end
+    if obj:IsA("Model") then
+        return obj.PrimaryPart
+            or obj:FindFirstChild("HarvestPart")
+            or obj:FindFirstChildWhichIsA("BasePart", true)
+    end
+    return obj:FindFirstChildWhichIsA("BasePart", true)
+end
 
 local function harvestPlant(plant)
     if not plant or not Networking then return false end
     local id = plant:GetAttribute("PlantId")
     local fruitid = plant:GetAttribute("FruitId") or ""
     if not id then return false end
-
     local ok = pcall(function()
         Networking.Garden.CollectFruit:Fire(id, fruitid)
     end)
+    return ok
+end
+
+-- TP tới fruit, fire remote, TP về (bypass server distance check)
+local function harvestPlantInfRange(plant, returnCFrame)
+    local hrp = getRoot(LocalPlayer)
+    if not hrp then return harvestPlant(plant) end
+
+    local part = getPartFromObj(plant)
+    if part then
+        pcall(function() hrp.CFrame = part.CFrame + Vector3.new(0, 3, 0) end)
+        task.wait()
+    end
+
+    local ok = harvestPlant(plant)
+
+    if returnCFrame then
+        pcall(function() hrp.CFrame = returnCFrame end)
+    end
     return ok
 end
 
@@ -210,6 +230,7 @@ genv.ftgs_AutoHarvest = false
 genv.ftgs_AutoSell    = false
 genv.ftgs_AutoSteal   = false
 genv.ftgs_AntiAFK     = false
+genv.ftgs_HarvestInfRange = false
 
 local GAGTab = Window:Tab({ Title = "Grow a Garden 2", Icon = "sprout" })
 
@@ -219,7 +240,7 @@ local harvestInterval = 0.05
 
 GAGTab:Toggle({
     Title = "Auto Harvest",
-    Desc  = "Tự động thu hoạch fruit chín (dùng Networking.Garden.CollectFruit)",
+    Desc  = "Tự động thu hoạch fruit chín",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoHarvest = state
@@ -229,6 +250,15 @@ GAGTab:Toggle({
             Icon = state and "play" or "pause",
             Duration = 2,
         })
+    end
+})
+
+GAGTab:Toggle({
+    Title = "Infinite Range (TP tới fruit)",
+    Desc  = "BẬT: TP tới từng fruit -> harvest -> TP về. Work ở cuối map. Nhanh nhưng có thể giật cam.",
+    Default = false,
+    Callback = function(state)
+        genv.ftgs_HarvestInfRange = state
     end
 })
 
@@ -244,9 +274,18 @@ GAGTab:Button({
     Icon  = "zap",
     Callback = function()
         local total, ok = 0, 0
+        local hrp = getRoot(LocalPlayer)
+        local origCF = hrp and hrp.CFrame
         for _, plant in ipairs(getHarvestablePlants()) do
             total = total + 1
-            if harvestPlant(plant) then ok = ok + 1 end
+            if genv.ftgs_HarvestInfRange then
+                if harvestPlantInfRange(plant, nil) then ok = ok + 1 end
+            else
+                if harvestPlant(plant) then ok = ok + 1 end
+            end
+        end
+        if genv.ftgs_HarvestInfRange and origCF and hrp then
+            pcall(function() hrp.CFrame = origCF end)
         end
         WindUI:Notify({
             Title = "Manual Harvest",
@@ -258,14 +297,14 @@ GAGTab:Button({
 })
 
 ------------------------------------------------------------
--- 7) UI - AUTO SELL (Fast, không teleport)
+-- 7) UI - AUTO SELL (Fast + Optional Teleport Infinite Range)
 ------------------------------------------------------------
 
 GAGTab:Section({ Title = "Auto Sell" })
 
 local sellInterval = 0.1
+local sellInfRange = false
 
--- WHITELIST chính xác - chỉ fire đúng remote, tránh remote nào TP người chơi
 local SELL_REMOTE_NAMES = {
     "Sell_Inventory", "SellInventory", "Sell_All", "SellAll", "SellItems",
 }
@@ -277,6 +316,7 @@ local SELL_NETWORKING_PATHS = {
 
 local cachedSellRemotes  = {}
 local cachedSellNetworks = {}
+local cachedSellCFrame   = nil
 
 local function rebuildSellCache()
     table.clear(cachedSellRemotes)
@@ -291,7 +331,6 @@ local function rebuildSellCache()
             end
         end
     end
-
     for _, obj in ipairs(Services.ReplicatedStorage:GetDescendants()) do
         if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
             for _, name in ipairs(SELL_REMOTE_NAMES) do
@@ -302,7 +341,6 @@ local function rebuildSellCache()
             end
         end
     end
-
     if Networking then
         for _, path in ipairs(SELL_NETWORKING_PATHS) do
             local cat = Networking[path[1]]
@@ -313,11 +351,28 @@ local function rebuildSellCache()
         end
     end
 end
-
 rebuildSellCache()
 
--- Sell siêu nhanh: chỉ fire whitelist remote, không TP
-local function sellInventory()
+-- Tự tìm Sell Stand trên map
+local function findSellStandCFrame()
+    if cachedSellCFrame then return cachedSellCFrame end
+    for _, obj in ipairs(Services.Workspace:GetDescendants()) do
+        local name = obj.Name:lower()
+        if (name:find("sell") and (obj:IsA("BasePart") or obj:IsA("Model"))) then
+            local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
+            if prompt then
+                local part = getPartFromObj(obj) or (prompt.Parent and prompt.Parent:IsA("BasePart") and prompt.Parent)
+                if part then
+                    cachedSellCFrame = part.CFrame + Vector3.new(0, 3, 0)
+                    return cachedSellCFrame
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function fireSellRemotes()
     for _, rem in ipairs(cachedSellRemotes) do
         pcall(function()
             if rem:IsA("RemoteEvent") then rem:FireServer() else rem:InvokeServer() end
@@ -326,12 +381,36 @@ local function sellInventory()
     for _, fn in ipairs(cachedSellNetworks) do
         pcall(function() fn:Fire() end)
     end
+end
+
+local function sellInventory()
+    if sellInfRange then
+        local hrp = getRoot(LocalPlayer)
+        local origCF = hrp and hrp.CFrame
+        local sellCF = findSellStandCFrame()
+        if hrp and sellCF then
+            pcall(function() hrp.CFrame = sellCF end)
+            task.wait(0.08)
+            fireSellRemotes()
+            task.wait(0.08)
+            -- Fire ProximityPrompt nếu game yêu cầu
+            for _, obj in ipairs(Services.Workspace:GetDescendants()) do
+                if obj:IsA("ProximityPrompt") and obj.Name:lower():find("sell") then
+                    pcall(fireproximityprompt, obj, 0)
+                end
+            end
+            task.wait(0.08)
+            if origCF then pcall(function() hrp.CFrame = origCF end) end
+            return true
+        end
+    end
+    fireSellRemotes()
     return true
 end
 
 GAGTab:Toggle({
     Title = "Auto Sell",
-    Desc  = "Bán liên tục - đứng sẵn cạnh Sell Stand",
+    Desc  = "Bán liên tục",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoSell = state
@@ -343,6 +422,58 @@ GAGTab:Toggle({
         })
     end
 })
+
+GAGTab:Toggle({
+    Title = "Infinite Range (TP tới Sell Stand)",
+    Desc  = "BẬT: TP tới sell stand -> bán -> TP về. Work ở cuối map.",
+    Default = false,
+    Callback = function(state)
+        sellInfRange = state
+        if state then
+            cachedSellCFrame = nil
+            local cf = findSellStandCFrame()
+            WindUI:Notify({
+                Title = "Sell Stand",
+                Content = cf and "Đã tìm thấy Sell Stand" or "Không tìm thấy - dùng nút 'Lưu vị trí'",
+                Icon = cf and "circle-check" or "circle-x",
+                Duration = 3,
+            })
+        end
+    end
+})
+
+GAGTab:Button({
+    Title = "Lưu vị trí hiện tại làm Sell Stand",
+    Icon  = "map-pin",
+    Callback = function()
+        local hrp = getRoot(LocalPlayer)
+        if hrp then
+            cachedSellCFrame = hrp.CFrame
+            if hasFs then
+                pcall(function()
+                    writefile("ntmthub_sell_cf.txt", tostring(hrp.CFrame))
+                end)
+            end
+            WindUI:Notify({ Title = "Sell Stand", Content = "Đã lưu vị trí hiện tại", Icon = "circle-check", Duration = 2 })
+        end
+    end
+})
+
+-- Load saved sell position from file
+if hasFs then
+    pcall(function()
+        if isfile("ntmthub_sell_cf.txt") then
+            local data = readfile("ntmthub_sell_cf.txt")
+            local nums = {}
+            for n in tostring(data):gmatch("[-%d%.]+") do
+                table.insert(nums, tonumber(n))
+            end
+            if #nums >= 12 then
+                cachedSellCFrame = CFrame.new(unpack(nums))
+            end
+        end
+    end)
+end
 
 GAGTab:Slider({
     Title = "Tốc độ Sell (giây)",
@@ -531,7 +662,7 @@ local stealReturnAfter = true
 
 GAGTab:Toggle({
     Title = "Auto Steal (chỉ vào ban đêm)",
-    Desc  = "Tự steal fruit có giá trị cao nhất trong game",
+    Desc  = "Tự steal fruit có giá trị cao nhất",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoSteal = state
@@ -605,13 +736,12 @@ local buyInterval  = 1.6
 
 local function fireRemote(rem, ...)
     if not rem then return false end
-    local ok = false
     if rem:IsA("RemoteEvent") then
-        ok = pcall(function() rem:FireServer(...) end)
+        return pcall(function() rem:FireServer(...) end)
     elseif rem:IsA("RemoteFunction") then
-        ok = pcall(function() rem:InvokeServer(...) end)
+        return pcall(function() rem:InvokeServer(...) end)
     end
-    return ok
+    return false
 end
 
 local BUY_SEED_REMOTE_NAMES = {
@@ -698,7 +828,6 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Mua TẤT CẢ Seed",
-    Desc  = "Bật = mua hết. Tắt = mở dropdown chọn (nếu dropdown lỗi, bật cái này)",
     Default = true,
     Callback = function(v) buyAllSeeds = v end
 })
@@ -742,7 +871,6 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Mua TẤT CẢ Gear",
-    Desc  = "Bật = mua hết. Tắt = mở dropdown chọn (nếu dropdown lỗi, bật cái này)",
     Default = true,
     Callback = function(v) buyAllGears = v end
 })
@@ -804,12 +932,12 @@ GAGTab:Button({
 })
 
 GAGTab:Button({
-    Title = "Debug: Tìm Buy remote trong GameEvents",
+    Title = "Debug: Liệt kê Buy remote",
     Icon  = "search",
     Callback = function()
         local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
         if not GE then
-            WindUI:Notify({ Title = "GameEvents", Content = "Không tìm thấy GameEvents folder", Icon = "circle-x", Duration = 4 })
+            WindUI:Notify({ Title = "GameEvents", Content = "Không tìm thấy", Icon = "circle-x", Duration = 4 })
             return
         end
         local found = {}
@@ -822,7 +950,7 @@ GAGTab:Button({
         print("[NTMT HUB] Buy remotes found:", table.concat(found, ", "))
         WindUI:Notify({
             Title = "Buy Remotes",
-            Content = #found > 0 and table.concat(found, ", ") or "Không tìm thấy remote nào",
+            Content = #found > 0 and table.concat(found, ", ") or "Không tìm thấy",
             Icon = "info",
             Duration = 6,
         })
@@ -830,7 +958,7 @@ GAGTab:Button({
 })
 
 ------------------------------------------------------------
--- 10) UI - AUTO COLLECT (Gold/Rainbow Seed + Item Drop)
+-- 10) UI - AUTO COLLECT DROPS
 ------------------------------------------------------------
 
 GAGTab:Section({ Title = "Auto Collect Drops" })
@@ -845,7 +973,6 @@ local collectKeywords = {
     mythic = false, special = false, drop = true,
 }
 
--- Folder mà drops/items thật sự nằm trong, KHÔNG quét các plant trong Gardens
 local DROP_FOLDER_NAMES = {
     "Drops", "DroppedItems", "Items", "Pickups", "WorldDrops", "Loot",
 }
@@ -869,16 +996,13 @@ end
 
 local function isValidDrop(item)
     if not item or not item.Parent then return false end
-    -- Loại bỏ mọi thứ nằm trong Gardens (plant, fruit, decor)
     if Gardens and item:IsDescendantOf(Gardens) then return false end
-    -- Không lấy chính player character
     if LocalPlayer.Character and item:IsDescendantOf(LocalPlayer.Character) then return false end
-    -- Phải có ProximityPrompt thật sự để collect
     local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
     if not prompt then return false end
     local actionText = (prompt.ActionText or ""):lower()
     local objectText = (prompt.ObjectText or ""):lower()
-    if not (actionText:find("pick") or actionText:find("collect") or actionText:find("nhặt")
+    if not (actionText:find("pick") or actionText:find("collect") or actionText:find("nhat")
          or objectText:find("pick") or objectText:find("collect") or objectText:find("drop")
          or nameMatchesKeyword(item.Name)) then
         return false
@@ -886,20 +1010,12 @@ local function isValidDrop(item)
     return true, prompt
 end
 
-local function getRootPart(item)
-    if item:IsA("BasePart") then return item end
-    if item:IsA("Model") then return item.PrimaryPart or item:FindFirstChildWhichIsA("BasePart") end
-    return item:FindFirstChildWhichIsA("BasePart", true)
-end
-
 local function collectItem(item, prompt)
     local hrp = getRoot(LocalPlayer)
     if not hrp then return end
-
-    local root = getRootPart(item)
+    local root = getPartFromObj(item)
     if not root then return end
 
-    -- Distance check để tránh collect xa vô lý
     local dist = (root.Position - hrp.Position).Magnitude
     if dist > collectMaxRange then return end
 
@@ -922,7 +1038,6 @@ local function scanDrops()
             end
         end
     else
-        -- Không có drops folder → chỉ quét top-level workspace có ProximityPrompt
         for _, item in ipairs(Services.Workspace:GetChildren()) do
             if item:IsA("Model") or item:IsA("Tool") or item:IsA("BasePart") then
                 local ok, prompt = isValidDrop(item)
@@ -935,7 +1050,7 @@ end
 
 GAGTab:Toggle({
     Title = "Auto Collect Drops",
-    Desc  = "Chỉ collect item có ProximityPrompt 'Pickup/Collect'. Bỏ qua plant trong Gardens.",
+    Desc  = "Chỉ collect item có ProximityPrompt 'Pickup/Collect'. Bỏ plant trong Gardens.",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoCollect = state
@@ -957,7 +1072,6 @@ GAGTab:Slider({
 
 GAGTab:Slider({
     Title = "Khoảng cách tối đa (studs)",
-    Desc  = "Bỏ qua drop xa hơn khoảng này",
     Step  = 10,
     Value = { Min = 50, Max = 1000, Default = 250 },
     Callback = function(v) collectMaxRange = v end
@@ -1008,7 +1122,7 @@ GAGTab:Button({
     Callback = function()
         local folders = findDropFolders()
         if #folders == 0 then
-            WindUI:Notify({ Title = "Drop Folders", Content = "Không tìm thấy folder drops/items trên map", Icon = "info", Duration = 4 })
+            WindUI:Notify({ Title = "Drop Folders", Content = "Không tìm thấy folder drops", Icon = "info", Duration = 4 })
         else
             local names = {}
             for _, f in ipairs(folders) do table.insert(names, f.Name .. "(" .. #f:GetChildren() .. ")") end
@@ -1053,14 +1167,26 @@ GAGTab:Toggle({
 -- 12) MAIN LOOPS
 ------------------------------------------------------------
 
--- Auto Harvest loop (dùng Networking.Garden.CollectFruit)
+-- Auto Harvest loop
 task.spawn(function()
     while true do
         if genv.ftgs_AutoHarvest then
             local ok, err = pcall(function()
-                for _, plant in ipairs(getHarvestablePlants()) do
-                    if not genv.ftgs_AutoHarvest then break end
-                    harvestPlant(plant)
+                local hrp = getRoot(LocalPlayer)
+                local origCF = hrp and hrp.CFrame
+                local plants = getHarvestablePlants()
+
+                if genv.ftgs_HarvestInfRange and hrp and origCF then
+                    for _, plant in ipairs(plants) do
+                        if not genv.ftgs_AutoHarvest then break end
+                        harvestPlantInfRange(plant, nil)
+                    end
+                    pcall(function() hrp.CFrame = origCF end)
+                else
+                    for _, plant in ipairs(plants) do
+                        if not genv.ftgs_AutoHarvest then break end
+                        harvestPlant(plant)
+                    end
                 end
             end)
             if not ok then warn("[Harvest loop]", err) end
@@ -1160,13 +1286,13 @@ InfoTab:Paragraph({
         return "PC"
     end)(),
 })
-InfoTab:Paragraph({ Title = "Networking module", Desc = Networking and "Loaded ✓" or "NOT FOUND ✗" })
-InfoTab:Paragraph({ Title = "FruitValueCalc",   Desc = FruitValueCalc and "Loaded ✓" or "NOT FOUND" })
-InfoTab:Paragraph({ Title = "Gardens folder",   Desc = Gardens and "Found ✓" or "NOT FOUND ✗" })
+InfoTab:Paragraph({ Title = "Networking module", Desc = Networking and "Loaded" or "NOT FOUND" })
+InfoTab:Paragraph({ Title = "FruitValueCalc",   Desc = FruitValueCalc and "Loaded" or "NOT FOUND" })
+InfoTab:Paragraph({ Title = "Gardens folder",   Desc = Gardens and "Found" or "NOT FOUND" })
 
 local nightStatus = InfoTab:Paragraph({
     Title = "Night Time",
-    Desc  = isNightTime() and "ĐÊM 🌙" or "NGÀY ☀",
+    Desc  = isNightTime() and "DEM" or "NGAY",
 })
 
 local plotStatus = InfoTab:Paragraph({
@@ -1177,7 +1303,7 @@ local plotStatus = InfoTab:Paragraph({
 task.spawn(function()
     while task.wait(2) do
         pcall(function()
-            nightStatus:SetDesc(isNightTime() and "ĐÊM 🌙" or "NGÀY ☀")
+            nightStatus:SetDesc(isNightTime() and "DEM" or "NGAY")
             local plot = getOwnedPlot()
             plotStatus:SetDesc(plot and ("Plot: " .. plot.Name) or "Không tìm thấy")
         end)
@@ -1201,19 +1327,18 @@ InfoTab:Button({
                 for k2, _ in pairs(v) do print("    ." .. tostring(k2)) end
             end
         end
-        print("=================================")
         WindUI:Notify({ Title = "Debug", Content = "Xem console (F9)", Icon = "terminal", Duration = 3 })
     end
 })
 
 InfoTab:Button({
-    Title = "Đếm fruit chín trên plot của bạn",
+    Title = "Đếm fruit trên plot của bạn",
     Icon  = "apple",
     Callback = function()
         local list = getHarvestablePlants()
         WindUI:Notify({
-            Title = "Harvestable Plants",
-            Content = ("%d fruit/plant sẵn sàng harvest"):format(#list),
+            Title = "Plants",
+            Content = ("%d fruit/plant"):format(#list),
             Icon = "info",
             Duration = 3,
         })
