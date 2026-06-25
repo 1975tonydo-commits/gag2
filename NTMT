@@ -1,5 +1,5 @@
 --[[
-    .ftgs hub - Grow a Garden 2
+    NTMT HUB - Grow a Garden 2
     Hỗ trợ: Delta X, Codex, Hydrogen, Arceus X, Fluxus, Synapse X, Krnl, Wave,
             VegaX, Solara, Xeno, Velocity, Electron, Trigon, JJsploit, ...
     Nền tảng: iOS / Android / PC / VNG / Mac
@@ -67,7 +67,6 @@ local Services = {
 
 local LocalPlayer = Services.Players.LocalPlayer
 
--- Game-specific: Gardens folder + Networking module
 local Gardens = Services.Workspace:WaitForChild("Gardens", 10)
 
 local Networking, FruitValueCalc
@@ -89,14 +88,14 @@ end
 ------------------------------------------------------------
 
 local Window = WindUI:CreateWindow({
-    Title  = ".ftgs hub | Grow a Garden 2",
+    Title  = "NTMT HUB | Grow a Garden 2",
     Author = "Executor: " .. Executor,
-    Folder = "ftgshub",
+    Folder = "ntmthub",
     Icon   = "sprout",
     NewElements = true,
     HideSearchBar = false,
     OpenButton = {
-        Title = "Open .ftgs hub",
+        Title = "Open NTMT HUB",
         CornerRadius = UDim.new(1, 0),
         StrokeThickness = 3,
         Enabled = true,
@@ -254,38 +253,147 @@ GAGTab:Section({ Title = "Auto Sell" })
 
 local sellInterval = 30
 
--- Thử cả Networking module và RemoteEvent fallback
-local function sellInventory()
-    if Networking then
-        local categories = { "Garden", "Sell", "Inventory" }
-        local actions = { "Sell", "SellAll", "SellInventory", "Sell_Inventory" }
-        for _, cat in ipairs(categories) do
-            local catTbl = Networking[cat]
-            if catTbl then
-                for _, act in ipairs(actions) do
-                    local fn = catTbl[act]
-                    if fn then
-                        local ok = pcall(function() fn:Fire() end)
-                        if ok then return true end
-                    end
+genv.ftgs_sellPos = genv.ftgs_sellPos
+
+local function findSellPrompts()
+    local out = {}
+    for _, prompt in ipairs(Services.Workspace:GetDescendants()) do
+        if prompt:IsA("ProximityPrompt") then
+            local txt = ((prompt.ActionText or "") .. " " .. (prompt.ObjectText or "")):lower()
+            if txt:find("sell") then
+                table.insert(out, prompt)
+            end
+        end
+    end
+    return out
+end
+
+local function getPromptAnchor(prompt)
+    local p = prompt.Parent
+    while p and not (p:IsA("BasePart") or p:IsA("Model")) do
+        p = p.Parent
+    end
+    if not p then return nil end
+    if p:IsA("Model") then
+        return p.PrimaryPart or p:FindFirstChildWhichIsA("BasePart", true)
+    end
+    return p
+end
+
+local function findSellPosition()
+    if genv.ftgs_sellPos then return genv.ftgs_sellPos end
+
+    local prompts = findSellPrompts()
+    if #prompts > 0 then
+        local anchor = getPromptAnchor(prompts[1])
+        if anchor then return anchor.CFrame + Vector3.new(0, 3, 0) end
+    end
+
+    for _, obj in ipairs(Services.Workspace:GetDescendants()) do
+        if (obj:IsA("Model") or obj:IsA("BasePart")) then
+            if obj.Name:lower():find("sell") then
+                local part = obj:IsA("BasePart") and obj
+                    or (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart", true))
+                if part then return part.CFrame + Vector3.new(0, 3, 0) end
+            end
+        end
+    end
+    return nil
+end
+
+local function findNetworkingSellMethods()
+    local out = {}
+    if not Networking then return out end
+
+    local function walk(tbl, path, depth)
+        if depth > 4 then return end
+        if type(tbl) ~= "table" then return end
+        for k, v in pairs(tbl) do
+            local key = tostring(k)
+            local currentPath = path .. "." .. key
+            if key:lower():find("sell") then
+                if type(v) == "table" and v.Fire then
+                    table.insert(out, { path = currentPath, fn = v })
+                elseif type(v) == "function" then
+                    table.insert(out, { path = currentPath, fn = v })
                 end
             end
+            if type(v) == "table" and v ~= tbl then
+                pcall(walk, v, currentPath, depth + 1)
+            end
+        end
+    end
+    pcall(walk, Networking, "Networking", 1)
+    return out
+end
+
+local sellTeleport = true
+local debugSell    = true
+
+local function sellInventory()
+    local hrp = getRoot(LocalPlayer)
+    if not hrp then return false, "no HRP" end
+
+    local origPos = hrp.CFrame
+    local fired = false
+
+    if sellTeleport then
+        local sellPos = findSellPosition()
+        if sellPos then
+            pcall(function() hrp.CFrame = sellPos end)
+            task.wait(0.1)
+            if debugSell then print("[Sell] teleported to", sellPos.Position) end
+        elseif debugSell then
+            print("[Sell] không tìm được sellPos tự động")
+        end
+    end
+
+    for _, prompt in ipairs(findSellPrompts()) do
+        if fireproximityprompt then
+            local ok = pcall(fireproximityprompt, prompt, 1)
+            if debugSell then print("[Sell] prompt", prompt:GetFullName(), "ok=", ok) end
+            if ok then fired = true end
         end
     end
 
     local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
     if GE then
-        for _, n in ipairs({ "Sell_Inventory", "SellInventory", "Sell_All", "SellAll", "Sell" }) do
+        for _, n in ipairs({ "Sell_Inventory", "SellInventory", "Sell_All", "SellAll", "Sell", "SellItems", "SellPlant" }) do
             local rem = GE:FindFirstChild(n)
             if rem then
                 local ok = pcall(function()
                     if rem:IsA("RemoteEvent") then rem:FireServer() else rem:InvokeServer() end
                 end)
-                if ok then return true end
+                if debugSell then print("[Sell] GameEvents." .. n, "ok=", ok) end
+                if ok then fired = true end
             end
         end
     end
-    return false
+
+    for _, m in ipairs(findNetworkingSellMethods()) do
+        local ok = pcall(function()
+            if m.fn.Fire then m.fn:Fire() else m.fn() end
+        end)
+        if debugSell then print("[Sell] networking", m.path, "ok=", ok) end
+        if ok then fired = true end
+    end
+
+    for _, obj in ipairs(Services.ReplicatedStorage:GetDescendants()) do
+        if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) and obj.Name:lower():find("sell") then
+            local ok = pcall(function()
+                if obj:IsA("RemoteEvent") then obj:FireServer() else obj:InvokeServer() end
+            end)
+            if debugSell then print("[Sell] RS scan", obj:GetFullName(), "ok=", ok) end
+            if ok then fired = true end
+        end
+    end
+
+    task.wait(0.2)
+    if sellTeleport then
+        pcall(function() hrp.CFrame = origPos end)
+    end
+
+    return fired
 end
 
 GAGTab:Toggle({
@@ -310,6 +418,19 @@ GAGTab:Slider({
     Callback = function(v) sellInterval = v end
 })
 
+GAGTab:Toggle({
+    Title = "Teleport tới Sell Shop trước khi bán",
+    Desc  = "Đa số GAG2 server check vị trí, phải đứng cạnh shop",
+    Default = true,
+    Callback = function(v) sellTeleport = v end
+})
+
+GAGTab:Toggle({
+    Title = "Debug Sell (in log ra console)",
+    Default = true,
+    Callback = function(v) debugSell = v end
+})
+
 GAGTab:Button({
     Title = "Sell All ngay",
     Icon  = "dollar-sign",
@@ -317,8 +438,59 @@ GAGTab:Button({
         local ok = sellInventory()
         WindUI:Notify({
             Title = ok and "Sell All" or "Lỗi",
-            Content = ok and "Đã gửi lệnh bán" or "Không tìm thấy Sell remote/method",
+            Content = ok and "Đã thử các cách bán (xem F9)" or "Không tìm thấy Sell remote/method",
             Icon = ok and "circle-check" or "circle-x",
+            Duration = 4,
+        })
+    end
+})
+
+GAGTab:Button({
+    Title = "Luu vi tri hien tai lam Sell Position",
+    Desc  = "Đứng cạnh Sell Stand rồi bấm nút này",
+    Icon  = "map-pin",
+    Callback = function()
+        local hrp = getRoot(LocalPlayer)
+        if not hrp then
+            WindUI:Notify({ Title = "Lỗi", Content = "Không có character", Icon = "x", Duration = 2 })
+            return
+        end
+        genv.ftgs_sellPos = hrp.CFrame
+        WindUI:Notify({
+            Title = "Đã lưu Sell Position",
+            Content = ("(%.1f, %.1f, %.1f)"):format(hrp.Position.X, hrp.Position.Y, hrp.Position.Z),
+            Icon = "circle-check",
+            Duration = 3,
+        })
+    end
+})
+
+GAGTab:Button({
+    Title = "Xoa Sell Position da luu",
+    Desc  = "Quay về chế độ tự dò",
+    Icon  = "trash",
+    Callback = function()
+        genv.ftgs_sellPos = nil
+        WindUI:Notify({ Title = "Đã xóa", Content = "Sẽ tự dò vị trí Sell", Icon = "circle-check", Duration = 2 })
+    end
+})
+
+GAGTab:Button({
+    Title = "Quét Sell Prompts trong workspace",
+    Desc  = "In ra console (F9) tất cả ProximityPrompt có chữ Sell",
+    Icon  = "search",
+    Callback = function()
+        local prompts = findSellPrompts()
+        print("===== Sell Prompts =====")
+        for _, p in ipairs(prompts) do
+            print(p:GetFullName(), "| ActionText:", p.ActionText, "| ObjectText:", p.ObjectText)
+        end
+        print("Tổng:", #prompts)
+        print("========================")
+        WindUI:Notify({
+            Title = "Sell Prompts",
+            Content = ("Tìm thấy %d prompt - xem console"):format(#prompts),
+            Icon = "info",
             Duration = 3,
         })
     end
@@ -574,7 +746,6 @@ GAGTab:Toggle({
 -- 10) MAIN LOOPS
 ------------------------------------------------------------
 
--- Auto Harvest loop (dùng Networking.Garden.CollectFruit)
 task.spawn(function()
     while true do
         if genv.ftgs_AutoHarvest then
@@ -590,7 +761,6 @@ task.spawn(function()
     end
 end)
 
--- Auto Sell loop
 task.spawn(function()
     while true do
         task.wait(sellInterval)
@@ -600,7 +770,6 @@ task.spawn(function()
     end
 end)
 
--- Auto Steal loop
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -639,13 +808,13 @@ InfoTab:Paragraph({
         return "PC"
     end)(),
 })
-InfoTab:Paragraph({ Title = "Networking module", Desc = Networking and "Loaded ✓" or "NOT FOUND ✗" })
-InfoTab:Paragraph({ Title = "FruitValueCalc",   Desc = FruitValueCalc and "Loaded ✓" or "NOT FOUND" })
-InfoTab:Paragraph({ Title = "Gardens folder",   Desc = Gardens and "Found ✓" or "NOT FOUND ✗" })
+InfoTab:Paragraph({ Title = "Networking module", Desc = Networking and "Loaded" or "NOT FOUND" })
+InfoTab:Paragraph({ Title = "FruitValueCalc",   Desc = FruitValueCalc and "Loaded" or "NOT FOUND" })
+InfoTab:Paragraph({ Title = "Gardens folder",   Desc = Gardens and "Found" or "NOT FOUND" })
 
 local nightStatus = InfoTab:Paragraph({
     Title = "Night Time",
-    Desc  = isNightTime() and "ĐÊM 🌙" or "NGÀY ☀",
+    Desc  = isNightTime() and "DEM" or "NGAY",
 })
 
 local plotStatus = InfoTab:Paragraph({
@@ -656,7 +825,7 @@ local plotStatus = InfoTab:Paragraph({
 task.spawn(function()
     while task.wait(2) do
         pcall(function()
-            nightStatus:SetDesc(isNightTime() and "ĐÊM 🌙" or "NGÀY ☀")
+            nightStatus:SetDesc(isNightTime() and "DEM" or "NGAY")
             local plot = getOwnedPlot()
             plotStatus:SetDesc(plot and ("Plot: " .. plot.Name) or "Không tìm thấy")
         end)
@@ -699,4 +868,4 @@ InfoTab:Button({
     end
 })
 
-print(("[ftgs hub] Đã khởi tạo trên executor: %s"):format(Executor))
+print(("[NTMT HUB] Đã khởi tạo trên executor: %s"):format(Executor))
