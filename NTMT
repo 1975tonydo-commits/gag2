@@ -714,60 +714,9 @@ InfoTab:Button({
 -- ... (paste nguyên phần 1-8 của bạn vào đây) ...
 
 ------------------------------------------------------------
--- 9) AUTO BUY - ĐÃ UPDATE THEO YÊU CẦU
+
 ------------------------------------------------------------
-local SEEDS_LIST = {
-    "Carrot", "Strawberry", "Blueberry", "Tulip", "Tomato", "Apple", "Bamboo",
-    "Corn", "Cactus", "Pineapple", "Mushroom", "GreenBean", "Banana", "Grape",
-    "Coconut", "Mango", "Acorn", "Cherry", "Sunflower", "Lotus", "Pomegranate",
-    "PoisonApple", "DragonFruit", "HornedMelon", "BabyCactus", "GlowMushroom",
-    "VenusFlytrap", "GhostPepper", "MoonBloom", "VenomSpitter", "DragonBreath",
-}
-
-local GEARS_LIST = {
-    "CommonWateringCan", "CommonSprinkler", "Sign", "UncommonSprinkler",
-    "RareSprinkler", "Trowel", "BasicTrap", "AdvancedShovel", "JumpMushroom",
-    "SpeedMushroom", "SuperWateringCan", "LegendarySprinkler", "PowerHose",
-    "FreezeRay", "VineWrapper", "RainbowCarpet", "Gnome", "Wheelbarrow",
-    "PlayerMagnet", "StrawberrySniper", "SuperSprinkler"
-}
-
-genv.ftgs_AutoBuySeed = false
-genv.ftgs_AutoBuyGear = false
-local selectedSeeds = {}
-local selectedGears = {}
-local buyAllSeeds = true
-local buyAllGears = true
-local buyAmount = 15
-local buyInterval = 1.4
-
-local function buySeed(name, amount)
-    pcall(function()
-        local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-        if GE and GE:FindFirstChild("Buy_Seed") then
-            GE.Buy_Seed:FireServer(name, amount or buyAmount)
-        elseif Networking then
-            local fn = (Networking.Shop or Networking.Garden or Networking).BuySeed
-            if fn and fn.Fire then fn:Fire(name, amount or buyAmount) end
-        end
-    end)
-end
-
-local function buyGear(name, amount)
-    pcall(function()
-        local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-        if GE and GE:FindFirstChild("Buy_Gear") then
-            GE.Buy_Gear:FireServer(name, amount or buyAmount)
-        elseif Networking then
-            local fn = (Networking.Shop or Networking.Garden or Networking).BuyGear
-            if fn and fn.Fire then fn:Fire(name, amount or buyAmount) end
-        end
-    end)
-end
-
--- ==================== UI AUTO BUY ====================
-------------------------------------------------------------
--- 9) AUTO BUY FIX (Mạnh - Mua từ xa)
+-- 9) AUTO BUY - FIX MẠNH NHẤT (2026)
 ------------------------------------------------------------
 local SEEDS_LIST = {
     "Carrot", "Strawberry", "Blueberry", "Tulip", "Tomato", "Apple", "Bamboo",
@@ -792,62 +741,87 @@ local selectedGears = {}
 local buyAllSeeds = true
 local buyAllGears = true
 local buyAmount = 20
-local buyInterval = 1.2
+local buyInterval = 1.1
 
 local function buySeed(name, amount)
+    amount = amount or buyAmount
     pcall(function()
-        -- Cách 1: GameEvents
+        -- Cách 1: GameEvents trực tiếp
         local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-        if GE and GE:FindFirstChild("Buy_Seed") then
-            GE.Buy_Seed:FireServer(name, amount or buyAmount)
-            return
+        if GE then
+            local rem = GE:FindFirstChild("Buy_Seed") or GE:FindFirstChild("PurchaseSeed") or GE:FindFirstChild("ShopBuy")
+            if rem then
+                if rem:IsA("RemoteEvent") then rem:FireServer(name, amount)
+                else rem:InvokeServer(name, amount) end
+                return
+            end
         end
-        -- Cách 2: Networking module
+        
+        -- Cách 2: Networking module (chính xác nhất)
         if Networking then
             local shop = Networking.Shop or Networking.Garden or Networking
-            if shop.BuySeed then shop.BuySeed:Fire(name, amount or buyAmount)
-            elseif shop.Buy_Seed then shop.Buy_Seed:Fire(name, amount or buyAmount) end
+            if shop.BuySeed then shop.BuySeed:Fire(name, amount)
+            elseif shop.Buy_Seed then shop.Buy_Seed:Fire(name, amount)
+            elseif shop.PurchaseSeed then shop.PurchaseSeed:Fire(name, amount) end
         end
     end)
 end
 
 local function buyGear(name, amount)
+    amount = amount or 1
     pcall(function()
         local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-        if GE and GE:FindFirstChild("Buy_Gear") then
-            GE.Buy_Gear:FireServer(name, amount or 1)
-            return
+        if GE then
+            local rem = GE:FindFirstChild("Buy_Gear") or GE:FindFirstChild("PurchaseGear")
+            if rem then
+                if rem:IsA("RemoteEvent") then rem:FireServer(name, amount)
+                else rem:InvokeServer(name, amount) end
+                return
+            end
         end
         if Networking then
             local shop = Networking.Shop or Networking.Garden or Networking
-            if shop.BuyGear then shop.BuyGear:Fire(name, amount or 1)
-            elseif shop.Buy_Gear then shop.Buy_Gear:Fire(name, amount or 1) end
+            if shop.BuyGear then shop.BuyGear:Fire(name, amount)
+            elseif shop.Buy_Gear then shop.Buy_Gear:Fire(name, amount) end
         end
     end)
 end
 
--- UI (giữ nguyên phần UI của bạn)
+-- ==================== UI ====================
 GAGTab:Section({ Title = "Auto Buy Seed & Gear" })
 
--- ... (giữ nguyên Toggle, Dropdown, Slider của bạn) ...
+GAGTab:Toggle({ Title = "Auto Buy Seed", Default = false, Callback = function(s) genv.ftgs_AutoBuySeed = s end })
+GAGTab:Toggle({ Title = "Mua TẤT CẢ Seed (Stock)", Default = true, Callback = function(v) buyAllSeeds = v end })
+GAGTab:Dropdown({
+    Title = "Chọn Seed muốn mua", Values = SEEDS_LIST, Multi = true,
+    Callback = function(sel) selectedSeeds = {}; for _,v in pairs(sel) do selectedSeeds[v] = true end end
+})
 
--- AUTO BUY LOOP
+GAGTab:Toggle({ Title = "Auto Buy Gear", Default = false, Callback = function(s) genv.ftgs_AutoBuyGear = s end })
+GAGTab:Toggle({ Title = "Mua TẤT CẢ Gear (Stock)", Default = true, Callback = function(v) buyAllGears = v end })
+GAGTab:Dropdown({
+    Title = "Chọn Gear muốn mua", Values = GEARS_LIST, Multi = true,
+    Callback = function(sel) selectedGears = {}; for _,v in pairs(sel) do selectedGears[v] = true end end
+})
+
+GAGTab:Slider({ Title = "Số lượng mua mỗi lần", Min = 1, Max = 100, Default = 20, Callback = function(v) buyAmount = v end })
+GAGTab:Slider({ Title = "Chu kỳ mua (giây)", Min = 0.8, Max = 4, Default = 1.1, Callback = function(v) buyInterval = v end })
+
+-- ==================== LOOP ====================
 task.spawn(function()
     while true do
         task.wait(buyInterval)
-        
         if genv.ftgs_AutoBuySeed then
             for _, s in ipairs(SEEDS_LIST) do
                 if buyAllSeeds or selectedSeeds[s] then
-                    buySeed(s, buyAmount)
+                    buySeed(s)
                 end
             end
         end
-        
         if genv.ftgs_AutoBuyGear then
             for _, g in ipairs(GEARS_LIST) do
                 if buyAllGears or selectedGears[g] then
-                    buyGear(g, 1)
+                    buyGear(g)
                 end
             end
         end
