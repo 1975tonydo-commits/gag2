@@ -766,77 +766,72 @@ local function buyGear(name, amount)
 end
 
 -- ==================== UI AUTO BUY ====================
+------------------------------------------------------------
+-- 9) AUTO BUY FIX (Mạnh - Mua từ xa)
+------------------------------------------------------------
+local SEEDS_LIST = {
+    "Carrot", "Strawberry", "Blueberry", "Tulip", "Tomato", "Apple", "Bamboo",
+    "Corn", "Cactus", "Pineapple", "Mushroom", "GreenBean", "Banana", "Grape",
+    "Coconut", "Mango", "Acorn", "Cherry", "Sunflower", "Lotus", "Pomegranate",
+    "PoisonApple", "DragonFruit", "HornedMelon", "BabyCactus", "GlowMushroom",
+    "VenusFlytrap", "GhostPepper", "MoonBloom", "VenomSpitter", "DragonBreath",
+}
+
+local GEARS_LIST = {
+    "CommonWateringCan", "CommonSprinkler", "Sign", "UncommonSprinkler",
+    "RareSprinkler", "Trowel", "BasicTrap", "AdvancedShovel", "JumpMushroom",
+    "SpeedMushroom", "SuperWateringCan", "LegendarySprinkler", "PowerHose",
+    "FreezeRay", "VineWrapper", "RainbowCarpet", "Gnome", "Wheelbarrow",
+    "PlayerMagnet", "StrawberrySniper", "SuperSprinkler"
+}
+
+genv.ftgs_AutoBuySeed = false
+genv.ftgs_AutoBuyGear = false
+local selectedSeeds = {}
+local selectedGears = {}
+local buyAllSeeds = true
+local buyAllGears = true
+local buyAmount = 20
+local buyInterval = 1.2
+
+local function buySeed(name, amount)
+    pcall(function()
+        -- Cách 1: GameEvents
+        local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
+        if GE and GE:FindFirstChild("Buy_Seed") then
+            GE.Buy_Seed:FireServer(name, amount or buyAmount)
+            return
+        end
+        -- Cách 2: Networking module
+        if Networking then
+            local shop = Networking.Shop or Networking.Garden or Networking
+            if shop.BuySeed then shop.BuySeed:Fire(name, amount or buyAmount)
+            elseif shop.Buy_Seed then shop.Buy_Seed:Fire(name, amount or buyAmount) end
+        end
+    end)
+end
+
+local function buyGear(name, amount)
+    pcall(function()
+        local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
+        if GE and GE:FindFirstChild("Buy_Gear") then
+            GE.Buy_Gear:FireServer(name, amount or 1)
+            return
+        end
+        if Networking then
+            local shop = Networking.Shop or Networking.Garden or Networking
+            if shop.BuyGear then shop.BuyGear:Fire(name, amount or 1)
+            elseif shop.Buy_Gear then shop.Buy_Gear:Fire(name, amount or 1) end
+        end
+    end)
+end
+
+-- UI (giữ nguyên phần UI của bạn)
 GAGTab:Section({ Title = "Auto Buy Seed & Gear" })
 
-GAGTab:Toggle({
-    Title = "Auto Buy Seed",
-    Default = false,
-    Callback = function(state) genv.ftgs_AutoBuySeed = state end
-})
+-- ... (giữ nguyên Toggle, Dropdown, Slider của bạn) ...
 
-GAGTab:Toggle({
-    Title = "Mua TẤT CẢ Seed (Stock)",
-    Desc = "Mua tất cả seed đang có trong shop",
-    Default = true,
-    Callback = function(v) buyAllSeeds = v end
-})
-
-GAGTab:Dropdown({
-    Title = "Chọn Seed muốn mua",
-    Values = SEEDS_LIST,
-    Value = {},
-    Multi = true,
-    AllowNone = true,
-    Callback = function(selected)
-        selectedSeeds = {}
-        if type(selected) == "table" then
-            for _, s in ipairs(selected) do selectedSeeds[s] = true end
-        end
-    end
-})
-
-GAGTab:Toggle({
-    Title = "Auto Buy Gear",
-    Default = false,
-    Callback = function(state) genv.ftgs_AutoBuyGear = state end
-})
-
-GAGTab:Toggle({
-    Title = "Mua TẤT CẢ Gear (Stock)",
-    Desc = "Mua tất cả gear đang có trong shop",
-    Default = true,
-    Callback = function(v) buyAllGears = v end
-})
-
-GAGTab:Dropdown({
-    Title = "Chọn Gear muốn mua",
-    Values = GEARS_LIST,
-    Value = {},
-    Multi = true,
-    AllowNone = true,
-    Callback = function(selected)
-        selectedGears = {}
-        if type(selected) == "table" then
-            for _, g in ipairs(selected) do selectedGears[g] = true end
-        end
-    end
-})
-
-GAGTab:Slider({
-    Title = "Số lượng mua mỗi lần",
-    Step = 1,
-    Value = { Min = 1, Max = 100, Default = 15 },
-    Callback = function(v) buyAmount = v end
-})
-
-GAGTab:Slider({
-    Title = "Chu kỳ Auto Buy (giây)",
-    Step = 0.2,
-    Value = { Min = 0.8, Max = 5, Default = 1.4 },
-    Callback = function(v) buyInterval = v end
-})
-
--- ==================== AUTO BUY LOOP ====================
+-- AUTO BUY LOOP
 task.spawn(function()
     while true do
         task.wait(buyInterval)
