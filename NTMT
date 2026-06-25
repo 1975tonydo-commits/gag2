@@ -33,7 +33,7 @@ local function universalHttpGet(url)
 end
 
 local hasFs = (writefile and readfile and isfile) ~= nil
-local genv = getgenv and getgenv() or _G
+local genv  = getgenv and getgenv() or _G
 
 ------------------------------------------------------------
 -- 2) LOAD WINDUI
@@ -54,7 +54,7 @@ do
 end
 
 ------------------------------------------------------------
--- 3) SERVICES & WINDOW
+-- 3) SERVICES & GAME MODULES
 ------------------------------------------------------------
 
 local Services = {
@@ -66,6 +66,27 @@ local Services = {
 }
 
 local LocalPlayer = Services.Players.LocalPlayer
+
+-- Game-specific: Gardens folder + Networking module
+local Gardens = Services.Workspace:WaitForChild("Gardens", 10)
+
+local Networking, FruitValueCalc
+do
+    local SharedModules = Services.ReplicatedStorage:WaitForChild("SharedModules", 10)
+    if SharedModules then
+        local ok1, mod1 = pcall(require, SharedModules:WaitForChild("Networking", 5))
+        if ok1 then Networking = mod1 end
+        local fvc = SharedModules:FindFirstChild("FruitValueCalc")
+        if fvc then
+            local ok2, mod2 = pcall(require, fvc)
+            if ok2 then FruitValueCalc = mod2 end
+        end
+    end
+end
+
+------------------------------------------------------------
+-- 4) WINDOW
+------------------------------------------------------------
 
 local Window = WindUI:CreateWindow({
     Title  = ".ftgs hub | Grow a Garden 2",
@@ -93,206 +114,101 @@ local Window = WindUI:CreateWindow({
     },
 })
 
-Window:Tag({
-    Title = "v" .. (WindUI.Version or "?"),
-    Icon  = "github",
-    Color = Color3.fromHex("#1c1c1c"),
-    Border = true,
-})
-
-Window:Tag({
-    Title = Executor,
-    Icon  = "cpu",
-    Color = Color3.fromHex("#257AF7"),
-    Border = true,
-})
-
-------------------------------------------------------------
--- 4) HELPER: Lấy farm của player, fruits, ...
-------------------------------------------------------------
-
-local function getHRP()
-    local char = LocalPlayer.Character or LocalPlayer.CharacterAdded:Wait()
-    return char and char:FindFirstChild("HumanoidRootPart")
+Window:Tag({ Title = "v" .. (WindUI.Version or "?"), Icon = "github", Color = Color3.fromHex("#1c1c1c"), Border = true })
+Window:Tag({ Title = Executor, Icon = "cpu", Color = Color3.fromHex("#257AF7"), Border = true })
+if Networking then
+    Window:Tag({ Title = "Networking OK", Icon = "check", Color = Color3.fromHex("#10C550"), Border = true })
+else
+    Window:Tag({ Title = "Networking FAIL", Icon = "x", Color = Color3.fromHex("#EF4F1D"), Border = true })
 end
 
-local function getOwnedFarms()
+------------------------------------------------------------
+-- 5) HELPERS - Plot / Plants / Player
+------------------------------------------------------------
+
+local function getHumanoid(player)
+    local char = player and player.Character
+    return char and char:FindFirstChildOfClass("Humanoid")
+end
+
+local function getRoot(player)
+    local hum = getHumanoid(player)
+    return hum and hum.RootPart
+end
+
+local function getOwnedPlot()
+    if not Gardens then return nil end
+    for _, plot in ipairs(Gardens:GetChildren()) do
+        if plot:GetAttribute("Owner") == LocalPlayer.Name
+            or plot:GetAttribute("OwnerUserId") == LocalPlayer.UserId then
+            return plot
+        end
+    end
+    return nil
+end
+
+local function isGrown(plant)
+    local maxAge = plant:GetAttribute("MaxAge")
+    local currentAge = plant:GetAttribute("Age")
+    if maxAge == nil or currentAge == nil then return false end
+    return currentAge >= maxAge
+end
+
+local function getHarvestablePlants()
     local out = {}
-    local FarmRoot = Services.Workspace:FindFirstChild("Farm")
-    if not FarmRoot then return out end
+    local plot = getOwnedPlot()
+    if not plot then return out end
 
-    for _, farm in ipairs(FarmRoot:GetChildren()) do
-        local important = farm:FindFirstChild("Important")
-        local data      = important and important:FindFirstChild("Data")
-        local owner     = data and data:FindFirstChild("Owner")
-        if owner and owner.Value == LocalPlayer.Name then
-            table.insert(out, farm)
-        end
-    end
-
-    if #out == 0 then
-        local hrp = getHRP()
-        if hrp then
-            local nearest, bestDist
-            for _, farm in ipairs(FarmRoot:GetChildren()) do
-                local ok, pivot = pcall(function() return farm:GetPivot() end)
-                if ok then
-                    local d = (pivot.Position - hrp.Position).Magnitude
-                    if not bestDist or d < bestDist then
-                        bestDist, nearest = d, farm
-                    end
-                end
-            end
-            if nearest then table.insert(out, nearest) end
-        end
-    end
-    return out
-end
-
-local function getFruitsInFarm(farm)
-    local fruits = {}
-    local important = farm:FindFirstChild("Important")
-    local plantsFolder = important and (
-        important:FindFirstChild("Plants_Physical")
-        or important:FindFirstChild("Plants")
-    )
-    if not plantsFolder then return fruits end
+    local plantsFolder = plot:FindFirstChild("Plants")
+    if not plantsFolder then return out end
 
     for _, plant in ipairs(plantsFolder:GetChildren()) do
         local fruitsFolder = plant:FindFirstChild("Fruits")
         if fruitsFolder then
             for _, fruit in ipairs(fruitsFolder:GetChildren()) do
-                if fruit:IsA("Model") or fruit:IsA("BasePart") then
-                    table.insert(fruits, fruit)
+                if fruit:IsA("Model") and isGrown(fruit) then
+                    table.insert(out, fruit)
                 end
             end
         else
-            if plant:IsA("Model") and plant:FindFirstChildWhichIsA("ProximityPrompt", true) then
-                table.insert(fruits, plant)
+            if plant:IsA("Model") and isGrown(plant) then
+                table.insert(out, plant)
             end
         end
     end
-    return fruits
+    return out
 end
 
-local function getFruitPart(fruit)
-    if fruit:IsA("BasePart") then return fruit end
-    if fruit.PrimaryPart then return fruit.PrimaryPart end
-    return fruit:FindFirstChildWhichIsA("BasePart", true)
+local function harvestPlant(plant)
+    if not plant or not Networking then return false end
+    local id = plant:GetAttribute("PlantId")
+    local fruitid = plant:GetAttribute("FruitId") or ""
+    if not id then return false end
+
+    local ok = pcall(function()
+        Networking.Garden.CollectFruit:Fire(id, fruitid)
+    end)
+    return ok
 end
 
 ------------------------------------------------------------
--- 5) AUTO HARVEST - Grow a Garden 2 specific
+-- 6) UI - AUTO HARVEST
 ------------------------------------------------------------
 
 genv.ftgs_AutoHarvest = false
 genv.ftgs_AutoSell    = false
+genv.ftgs_AutoSteal   = false
+genv.ftgs_AntiAFK     = false
 
 local GAGTab = Window:Tab({ Title = "Grow a Garden 2", Icon = "sprout" })
 
 GAGTab:Section({ Title = "Auto Harvest" })
 
-local HarvestMode    = "Combined"
-local harvestInterval = 0.4
-local teleportBack   = true
-local debugHarvest   = false
-
--- Lấy remote harvest (thử nhiều tên)
-local function getHarvestRemote()
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    if not GE then return nil end
-    local names = {
-        "SummerHarvestRemoteEvent",
-        "HarvestRemoteEvent",
-        "Harvest_RE",
-        "Collect_Fruit",
-        "CollectFruit",
-        "Harvest",
-    }
-    for _, n in ipairs(names) do
-        local r = GE:FindFirstChild(n)
-        if r then return r, n end
-    end
-    return nil
-end
-
-local function fireHarvestRemote(arg)
-    local rem, name = getHarvestRemote()
-    if not rem then return false end
-    local ok = pcall(function()
-        if rem:IsA("RemoteEvent") then
-            rem:FireServer(arg)
-        else
-            rem:InvokeServer(arg)
-        end
-    end)
-    if debugHarvest then
-        print("[Harvest] fire", name, "arg=", arg, "ok=", ok)
-    end
-    return ok
-end
-
--- Cách REMOTE: gửi "SubmitAllPlants" - harvest tất cả cùng lúc
-local function harvestRemoteAll()
-    return fireHarvestRemote("SubmitAllPlants")
-end
-
--- Cách PROXIMITY/TOUCH: tới gần fruit và trigger
-local function harvestSingleFruit(fruit)
-    local part = getFruitPart(fruit)
-    if not part then return false end
-
-    -- Teleport HRP gần fruit (nhiều game check khoảng cách trên server)
-    local hrp = getHRP()
-    if not hrp then return false end
-
-    local origCFrame = hrp.CFrame
-    pcall(function()
-        hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0))
-    end)
-
-    -- Đợi 1 frame để server nhận vị trí
-    task.wait(0.05)
-
-    local fired = false
-
-    -- 1. ProximityPrompt
-    local prompt = fruit:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt and fireproximityprompt then
-        pcall(fireproximityprompt, prompt, 1)
-        fired = true
-    end
-
-    -- 2. RemoteEvent với fruit làm tham số
-    if not fired then
-        fireHarvestRemote(fruit)
-        fired = true
-    end
-
-    -- 3. firetouchinterest
-    if firetouchinterest then
-        pcall(firetouchinterest, hrp, part, 0)
-        pcall(firetouchinterest, hrp, part, 1)
-    end
-
-    if teleportBack then
-        task.wait(0.05)
-        pcall(function() hrp.CFrame = origCFrame end)
-    end
-
-    return fired
-end
-
-GAGTab:Dropdown({
-    Title = "Chế độ Harvest",
-    Values = { "Remote", "Teleport", "Combined" },
-    Value  = "Combined",
-    Callback = function(v) HarvestMode = v end
-})
+local harvestInterval = 0.05
 
 GAGTab:Toggle({
     Title = "Auto Harvest",
-    Desc  = "Tự động thu hoạch tất cả fruit chín trong garden",
+    Desc  = "Tự động thu hoạch fruit chín (dùng Networking.Garden.CollectFruit)",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoHarvest = state
@@ -307,52 +223,23 @@ GAGTab:Toggle({
 
 GAGTab:Slider({
     Title = "Tốc độ Harvest (giây)",
-    Step  = 0.1,
-    Value = { Min = 0.1, Max = 3, Default = 0.4 },
+    Step  = 0.01,
+    Value = { Min = 0.01, Max = 2, Default = 0.05 },
     Callback = function(v) harvestInterval = v end
 })
 
-GAGTab:Toggle({
-    Title = "Quay về vị trí cũ sau khi harvest",
-    Desc  = "Tắt nếu muốn đứng yên tại fruit cuối cùng",
-    Default = true,
-    Callback = function(v) teleportBack = v end
-})
-
-GAGTab:Toggle({
-    Title = "Debug (in log ra console)",
-    Default = false,
-    Callback = function(v) debugHarvest = v end
-})
-
 GAGTab:Button({
-    Title = "Harvest 1 lần (Remote)",
+    Title = "Harvest 1 lần ngay",
     Icon  = "zap",
     Callback = function()
-        local ok = harvestRemoteAll()
-        WindUI:Notify({
-            Title = ok and "Remote Harvest" or "Lỗi",
-            Content = ok and "Đã gửi SubmitAllPlants" or "Không tìm thấy Harvest Remote",
-            Icon = ok and "circle-check" or "circle-x",
-            Duration = 3,
-        })
-    end
-})
-
-GAGTab:Button({
-    Title = "Harvest 1 lần (Teleport)",
-    Icon  = "map-pin",
-    Callback = function()
-        local total, picked = 0, 0
-        for _, farm in ipairs(getOwnedFarms()) do
-            for _, fruit in ipairs(getFruitsInFarm(farm)) do
-                total = total + 1
-                if harvestSingleFruit(fruit) then picked = picked + 1 end
-            end
+        local total, ok = 0, 0
+        for _, plant in ipairs(getHarvestablePlants()) do
+            total = total + 1
+            if harvestPlant(plant) then ok = ok + 1 end
         end
         WindUI:Notify({
-            Title = "Teleport Harvest",
-            Content = ("Đã thu %d/%d fruit"):format(picked, total),
+            Title = "Manual Harvest",
+            Content = ("Đã harvest %d/%d fruit"):format(ok, total),
             Icon = "circle-check",
             Duration = 3,
         })
@@ -360,36 +247,45 @@ GAGTab:Button({
 })
 
 ------------------------------------------------------------
--- 6) AUTO SELL
+-- 7) UI - AUTO SELL
 ------------------------------------------------------------
 
 GAGTab:Section({ Title = "Auto Sell" })
 
 local sellInterval = 30
 
-local function getSellRemote()
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    if not GE then return nil end
-    local names = { "Sell_Inventory", "SellInventory", "Sell_All", "SellAll", "Sell" }
-    for _, n in ipairs(names) do
-        local r = GE:FindFirstChild(n)
-        if r then return r, n end
-    end
-    return nil
-end
-
+-- Thử cả Networking module và RemoteEvent fallback
 local function sellInventory()
-    local rem, name = getSellRemote()
-    if not rem then return false end
-    local ok = pcall(function()
-        if rem:IsA("RemoteEvent") then
-            rem:FireServer()
-        else
-            rem:InvokeServer()
+    if Networking then
+        local categories = { "Garden", "Sell", "Inventory" }
+        local actions = { "Sell", "SellAll", "SellInventory", "Sell_Inventory" }
+        for _, cat in ipairs(categories) do
+            local catTbl = Networking[cat]
+            if catTbl then
+                for _, act in ipairs(actions) do
+                    local fn = catTbl[act]
+                    if fn then
+                        local ok = pcall(function() fn:Fire() end)
+                        if ok then return true end
+                    end
+                end
+            end
         end
-    end)
-    if debugHarvest then print("[Sell] fire", name, "ok=", ok) end
-    return ok
+    end
+
+    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
+    if GE then
+        for _, n in ipairs({ "Sell_Inventory", "SellInventory", "Sell_All", "SellAll", "Sell" }) do
+            local rem = GE:FindFirstChild(n)
+            if rem then
+                local ok = pcall(function()
+                    if rem:IsA("RemoteEvent") then rem:FireServer() else rem:InvokeServer() end
+                end)
+                if ok then return true end
+            end
+        end
+    end
+    return false
 end
 
 GAGTab:Toggle({
@@ -421,7 +317,7 @@ GAGTab:Button({
         local ok = sellInventory()
         WindUI:Notify({
             Title = ok and "Sell All" or "Lỗi",
-            Content = ok and "Đã gửi lệnh bán" or "Không tìm thấy Sell Remote",
+            Content = ok and "Đã gửi lệnh bán" or "Không tìm thấy Sell remote/method",
             Icon = ok and "circle-check" or "circle-x",
             Duration = 3,
         })
@@ -429,7 +325,221 @@ GAGTab:Button({
 })
 
 ------------------------------------------------------------
--- 7) MISC: Anti-AFK
+-- 8) UI - AUTO STEAL AT NIGHT
+------------------------------------------------------------
+
+GAGTab:Section({ Title = "Auto Steal (Night Only)" })
+
+local function isNightTime()
+    local Night = Services.ReplicatedStorage:FindFirstChild("Night")
+    return Night and Night.Value == true
+end
+
+local function plotUnlocked(player)
+    local plot = nil
+    for _, p in ipairs(Gardens:GetChildren()) do
+        if p:GetAttribute("OwnerUserId") == player.UserId then plot = p break end
+    end
+    if not plot then return true end
+    local visual = plot:FindFirstChild("Visual")
+    local area = visual and visual:FindFirstChild("PlotSizeReferenceVisual")
+    if not area then return true end
+
+    for _, touching in ipairs(Services.Workspace:GetPartBoundsInBox(area.CFrame, area.Size)) do
+        if player.Character and touching:IsDescendantOf(player.Character) then
+            return false
+        end
+    end
+    return true
+end
+
+local function calculateValue(fruit)
+    if not FruitValueCalc then return fruit:GetAttribute("Age") or 1 end
+    local name = fruit:GetAttribute("CorePartName") or fruit:GetAttribute("PlantName")
+    local size = fruit:GetAttribute("SizeMulti") or fruit:GetAttribute("Age")
+    local mut  = fruit:GetAttribute("Mutation")
+    local ok, val = pcall(FruitValueCalc, name, size, mut, LocalPlayer, 1)
+    return ok and val or 0
+end
+
+local function getMostValuableSteal()
+    local bestValue, bestItem = 0, nil
+    for _, plot in ipairs(Gardens:GetChildren()) do
+        local ownerId = plot:GetAttribute("OwnerUserId")
+        local owner = ownerId and Services.Players:GetPlayerByUserId(ownerId)
+        if owner and owner ~= LocalPlayer then
+            local hum = getHumanoid(owner)
+            if not (hum and hum.Sit) then
+                local plants = plot:FindFirstChild("Plants")
+                if plants then
+                    for _, plant in ipairs(plants:GetChildren()) do
+                        local fruits = plant:FindFirstChild("Fruits")
+                        local candidates = {}
+                        if fruits then
+                            for _, fr in ipairs(fruits:GetChildren()) do
+                                local hp = fr:FindFirstChild("HarvestPart")
+                                if hp and hp:FindFirstChild("StealPrompt") then
+                                    table.insert(candidates, fr)
+                                end
+                            end
+                        else
+                            local hp = plant:FindFirstChild("HarvestPart")
+                            if hp and hp:FindFirstChild("StealPrompt") then
+                                table.insert(candidates, plant)
+                            end
+                        end
+                        for _, c in ipairs(candidates) do
+                            local v = calculateValue(c)
+                            if v > bestValue then
+                                bestValue, bestItem = v, c
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+    return bestItem, bestValue
+end
+
+local function returnToOwnPlot()
+    local myPlot = getOwnedPlot()
+    local ref = myPlot and myPlot:FindFirstChild("PlotSizeReference")
+    local root = getRoot(LocalPlayer)
+    if ref and root then
+        for _ = 1, 5 do
+            pcall(function() root.CFrame = ref.CFrame end)
+            task.wait(0.05)
+        end
+    end
+end
+
+local function flingPlayer(player)
+    local root = getRoot(LocalPlayer)
+    local hum  = getHumanoid(LocalPlayer)
+    local _root = getRoot(player)
+    local _hum  = getHumanoid(player)
+    if not (root and hum and _root and _hum) then return end
+
+    local oldPos = root.CFrame
+    local flinging = true
+
+    task.spawn(function()
+        local m = 0.1
+        repeat
+            task.wait()
+            local v = root.Velocity
+            root.Velocity = v * 10000 + Vector3.new(0, 10000, 0)
+            Services.RunService.RenderStepped:Wait()
+            root.Velocity = v
+            Services.RunService.Stepped:Wait()
+            root.Velocity = v + Vector3.new(0, m, 0)
+            m = m * -1
+        until not flinging
+    end)
+
+    local start = tick()
+    repeat
+        task.wait()
+        local ok, _ = pcall(function()
+            sethiddenproperty(root, "PhysicsRepRootPart", _root)
+        end)
+        local mag = _root.Velocity.Magnitude
+        local dir = _hum.MoveDirection or Vector3.zero
+        local offset
+        if mag < 5 or ok then
+            offset = Vector3.new(0, math.random(-0.5, 0.4), 0)
+        else
+            offset = dir * (mag / Random.new():NextNumber(0.7, 8)) - Vector3.new(0, math.random(-1, 1), 0)
+        end
+        hum.Sit = false
+        Services.Workspace.CurrentCamera.CameraSubject = _hum
+        root.CFrame = CFrame.new(_root.Position) * CFrame.new(offset) * CFrame.Angles(math.random(0, 360), 0, 0)
+    until (tick() - start >= 2) or (_root.Velocity.Magnitude > 200)
+
+    flinging = false
+    root.CFrame = oldPos
+    Services.Workspace.CurrentCamera.CameraSubject = hum
+    pcall(function() sethiddenproperty(root, "PhysicsRepRootPart", nil) end)
+end
+
+local function stealFruit(fruit)
+    if not Networking then return false end
+    if not isNightTime() then return false end
+    local hp = fruit:FindFirstChild("HarvestPart")
+    local sp = hp and hp:FindFirstChild("StealPrompt")
+    if not sp then return false end
+
+    local userId = tonumber(fruit:GetAttribute("UserId"))
+    local plantId = fruit:GetAttribute("PlantId")
+    local fruitId = fruit:GetAttribute("FruitId") or ""
+    local owner = userId and Services.Players:GetPlayerByUserId(userId)
+
+    if owner and not plotUnlocked(owner) then
+        pcall(flingPlayer, owner)
+    end
+
+    local root = getRoot(LocalPlayer)
+    if not root then return false end
+
+    for _ = 1, 2 do
+        pcall(function() root.CFrame = hp.CFrame end)
+        pcall(function() Networking.Steal.BeginSteal:Fire(userId, plantId, fruitId) end)
+        pcall(function() Networking.Steal.CompleteSteal:Fire() end)
+        task.wait(0.05)
+    end
+    return true
+end
+
+local stealReturnAfter = true
+
+GAGTab:Toggle({
+    Title = "Auto Steal (chỉ vào ban đêm)",
+    Desc  = "Tự steal fruit có giá trị cao nhất trong game",
+    Default = false,
+    Callback = function(state)
+        genv.ftgs_AutoSteal = state
+        WindUI:Notify({
+            Title = "Auto Steal",
+            Content = state and "Đã bật (đợi đêm)" or "Đã tắt",
+            Icon = state and "play" or "pause",
+            Duration = 2,
+        })
+    end
+})
+
+GAGTab:Toggle({
+    Title = "Quay về plot sau mỗi đợt steal",
+    Default = true,
+    Callback = function(v) stealReturnAfter = v end
+})
+
+GAGTab:Button({
+    Title = "Test Steal 1 fruit",
+    Icon  = "swords",
+    Callback = function()
+        if not isNightTime() then
+            WindUI:Notify({ Title = "Chưa được", Content = "Chỉ steal được vào ban đêm", Icon = "moon", Duration = 3 })
+            return
+        end
+        local target, val = getMostValuableSteal()
+        if not target then
+            WindUI:Notify({ Title = "Không có target", Content = "Không tìm thấy fruit để steal", Icon = "circle-x", Duration = 3 })
+            return
+        end
+        local ok = stealFruit(target)
+        if stealReturnAfter then returnToOwnPlot() end
+        WindUI:Notify({
+            Title = ok and "Steal" or "Lỗi",
+            Content = ok and ("Steal: %s (value %s)"):format(target.Name, tostring(val)) or "Steal thất bại",
+            Icon = ok and "circle-check" or "circle-x",
+            Duration = 3,
+        })
+    end
+})
+
+------------------------------------------------------------
+-- 9) UI - TIỆN ÍCH
 ------------------------------------------------------------
 
 GAGTab:Section({ Title = "Tiện ích" })
@@ -461,45 +571,26 @@ GAGTab:Toggle({
 })
 
 ------------------------------------------------------------
--- 8) MAIN LOOPS
+-- 10) MAIN LOOPS
 ------------------------------------------------------------
 
--- Loop Auto Harvest
+-- Auto Harvest loop (dùng Networking.Garden.CollectFruit)
 task.spawn(function()
     while true do
-        local interval = harvestInterval
         if genv.ftgs_AutoHarvest then
             local ok, err = pcall(function()
-                if HarvestMode == "Remote" then
-                    harvestRemoteAll()
-                elseif HarvestMode == "Teleport" then
-                    for _, farm in ipairs(getOwnedFarms()) do
-                        if not genv.ftgs_AutoHarvest then break end
-                        for _, fruit in ipairs(getFruitsInFarm(farm)) do
-                            if not genv.ftgs_AutoHarvest then break end
-                            harvestSingleFruit(fruit)
-                            task.wait(0.05)
-                        end
-                    end
-                else -- Combined
-                    harvestRemoteAll()
-                    for _, farm in ipairs(getOwnedFarms()) do
-                        if not genv.ftgs_AutoHarvest then break end
-                        for _, fruit in ipairs(getFruitsInFarm(farm)) do
-                            if not genv.ftgs_AutoHarvest then break end
-                            harvestSingleFruit(fruit)
-                            task.wait(0.05)
-                        end
-                    end
+                for _, plant in ipairs(getHarvestablePlants()) do
+                    if not genv.ftgs_AutoHarvest then break end
+                    harvestPlant(plant)
                 end
             end)
-            if not ok and debugHarvest then warn("[Harvest loop]", err) end
+            if not ok then warn("[Harvest loop]", err) end
         end
-        task.wait(interval)
+        task.wait(harvestInterval)
     end
 end)
 
--- Loop Auto Sell
+-- Auto Sell loop
 task.spawn(function()
     while true do
         task.wait(sellInterval)
@@ -509,54 +600,102 @@ task.spawn(function()
     end
 end)
 
+-- Auto Steal loop
+task.spawn(function()
+    while true do
+        task.wait(0.5)
+        if genv.ftgs_AutoSteal and isNightTime() then
+            for _ = 1, 30 do
+                if not (genv.ftgs_AutoSteal and isNightTime()) then break end
+                local target = select(1, getMostValuableSteal())
+                if target then
+                    pcall(stealFruit, target)
+                else
+                    break
+                end
+            end
+            if stealReturnAfter then
+                pcall(returnToOwnPlot)
+            end
+        end
+    end
+end)
+
 ------------------------------------------------------------
--- 9) INFO TAB
+-- 11) INFO / DEBUG TAB
 ------------------------------------------------------------
 
 local InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
 
-InfoTab:Section({ Title = "Thông tin" })
+InfoTab:Section({ Title = "Trạng thái" })
 
 InfoTab:Paragraph({ Title = "Executor", Desc = Executor })
-
 InfoTab:Paragraph({
     Title = "Platform",
     Desc  = (function()
         local UIS = game:GetService("UserInputService")
-        if UIS.TouchEnabled and not UIS.MouseEnabled and not UIS.KeyboardEnabled then
-            return "Mobile (iOS/Android)"
-        elseif UIS.TouchEnabled and UIS.MouseEnabled then
-            return "Hybrid (PC + Touch)"
-        end
+        if UIS.TouchEnabled and not UIS.MouseEnabled and not UIS.KeyboardEnabled then return "Mobile" end
+        if UIS.TouchEnabled and UIS.MouseEnabled then return "Hybrid" end
         return "PC"
     end)(),
 })
+InfoTab:Paragraph({ Title = "Networking module", Desc = Networking and "Loaded ✓" or "NOT FOUND ✗" })
+InfoTab:Paragraph({ Title = "FruitValueCalc",   Desc = FruitValueCalc and "Loaded ✓" or "NOT FOUND" })
+InfoTab:Paragraph({ Title = "Gardens folder",   Desc = Gardens and "Found ✓" or "NOT FOUND ✗" })
 
-InfoTab:Paragraph({ Title = "Filesystem", Desc = hasFs and "Có" or "Không" })
-InfoTab:Paragraph({ Title = "WindUI Version", Desc = tostring(WindUI.Version or "unknown") })
+local nightStatus = InfoTab:Paragraph({
+    Title = "Night Time",
+    Desc  = isNightTime() and "ĐÊM 🌙" or "NGÀY ☀",
+})
 
--- Show what remotes exist (giúp debug)
-local function listRemoteNames()
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    if not GE then return "Không có ReplicatedStorage.GameEvents" end
-    local list = {}
-    for _, c in ipairs(GE:GetChildren()) do
-        table.insert(list, c.Name .. " (" .. c.ClassName .. ")")
+local plotStatus = InfoTab:Paragraph({
+    Title = "My Plot",
+    Desc  = getOwnedPlot() and ("Plot: " .. getOwnedPlot().Name) or "Không tìm thấy",
+})
+
+task.spawn(function()
+    while task.wait(2) do
+        pcall(function()
+            nightStatus:SetDesc(isNightTime() and "ĐÊM 🌙" or "NGÀY ☀")
+            local plot = getOwnedPlot()
+            plotStatus:SetDesc(plot and ("Plot: " .. plot.Name) or "Không tìm thấy")
+        end)
     end
-    table.sort(list)
-    return #list > 0 and table.concat(list, "\n") or "(rỗng)"
-end
+end)
 
 InfoTab:Section({ Title = "Debug" })
 
 InfoTab:Button({
-    Title = "In danh sách Remote ra console",
+    Title = "List Networking categories",
     Icon  = "list",
     Callback = function()
-        print("===== GameEvents Children =====")
-        print(listRemoteNames())
-        print("================================")
+        if not Networking then
+            WindUI:Notify({ Title = "Lỗi", Content = "Networking chưa load", Icon = "x", Duration = 3 })
+            return
+        end
+        print("===== Networking categories =====")
+        for k, v in pairs(Networking) do
+            print(k, "->", type(v))
+            if type(v) == "table" then
+                for k2, _ in pairs(v) do print("    ." .. tostring(k2)) end
+            end
+        end
+        print("=================================")
         WindUI:Notify({ Title = "Debug", Content = "Xem console (F9)", Icon = "terminal", Duration = 3 })
+    end
+})
+
+InfoTab:Button({
+    Title = "Đếm fruit chín trên plot của bạn",
+    Icon  = "apple",
+    Callback = function()
+        local list = getHarvestablePlants()
+        WindUI:Notify({
+            Title = "Harvestable Plants",
+            Content = ("%d fruit/plant sẵn sàng harvest"):format(#list),
+            Icon = "info",
+            Duration = 3,
+        })
     end
 })
 
