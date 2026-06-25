@@ -157,6 +157,16 @@ task.spawn(function()
     end
 end)
 
+-- Filter: chỉ trả fruit ĐÃ CHÍN nếu bật ripeOnly (giảm spam error)
+local harvestRipeOnly = true
+
+local function isGrown(plant)
+    local maxAge = plant:GetAttribute("MaxAge")
+    local age    = plant:GetAttribute("Age")
+    if maxAge == nil or age == nil then return true end -- không có attribute thì cho qua
+    return age >= maxAge
+end
+
 local function getAllPlantsInPlot()
     local out = {}
     local plot = getCachedOwnedPlot()
@@ -169,11 +179,15 @@ local function getAllPlantsInPlot()
         if fruitsFolder then
             for _, fruit in ipairs(fruitsFolder:GetChildren()) do
                 if fruit:IsA("Model") and fruit:GetAttribute("PlantId") then
-                    table.insert(out, fruit)
+                    if not harvestRipeOnly or isGrown(fruit) then
+                        table.insert(out, fruit)
+                    end
                 end
             end
         elseif plant:IsA("Model") and plant:GetAttribute("PlantId") then
-            table.insert(out, plant)
+            if not harvestRipeOnly or isGrown(plant) then
+                table.insert(out, plant)
+            end
         end
     end
     return out
@@ -236,7 +250,7 @@ local GAGTab = Window:Tab({ Title = "Grow a Garden 2", Icon = "sprout" })
 
 GAGTab:Section({ Title = "Auto Harvest" })
 
-local harvestInterval = 0.05
+local harvestInterval = 0.15
 
 GAGTab:Toggle({
     Title = "Auto Harvest",
@@ -254,8 +268,15 @@ GAGTab:Toggle({
 })
 
 GAGTab:Toggle({
+    Title = "Chỉ harvest fruit ĐÃ CHÍN",
+    Desc  = "BẬT (khuyên dùng): chỉ harvest fruit Age >= MaxAge → giảm spam lỗi console",
+    Default = true,
+    Callback = function(v) harvestRipeOnly = v end
+})
+
+GAGTab:Toggle({
     Title = "Infinite Range (TP tới fruit)",
-    Desc  = "BẬT: TP tới từng fruit -> harvest -> TP về. Work ở cuối map. Nhanh nhưng có thể giật cam.",
+    Desc  = "BẬT: TP tới từng fruit -> harvest -> TP về. Work ở cuối map.",
     Default = false,
     Callback = function(state)
         genv.ftgs_HarvestInfRange = state
@@ -264,8 +285,9 @@ GAGTab:Toggle({
 
 GAGTab:Slider({
     Title = "Tốc độ Harvest (giây)",
-    Step  = 0.01,
-    Value = { Min = 0.01, Max = 2, Default = 0.05 },
+    Desc  = "Chậm hơn → ít error hơn. 0.15s là cân bằng",
+    Step  = 0.05,
+    Value = { Min = 0.05, Max = 2, Default = 0.15 },
     Callback = function(v) harvestInterval = v end
 })
 
