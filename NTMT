@@ -1,4 +1,12 @@
--- NTMT HUB Grow a Garden 2
+warn("[NTMT HUB v3.1] DANG CHAY...")
+pcall(function()
+    game:GetService("StarterGui"):SetCore("SendNotification", {
+        Title = "NTMT HUB v3.1",
+        Text = "Script da chay! Tim nut xanh Open NTMT HUB",
+        Duration = 10,
+    })
+end)
+
 local __NTMT_OK, __NTMT_ERR = pcall(function()
 
 local function getGlobal(n)
@@ -21,7 +29,6 @@ local function getGlobal(n)
     return nil
 end
 
-local LOAD = getGlobal("loadstring") or getGlobal("load")
 local Executor = "Unknown"
 if type(getGlobal("identifyexecutor")) == "function" then
     local ok, n = pcall(getGlobal("identifyexecutor"))
@@ -262,43 +269,14 @@ end
 local hasFs = (getGlobal("writefile") and getGlobal("readfile") and getGlobal("isfile")) ~= nil
 
 ------------------------------------------------------------
--- 2) LOAD WINDUI (fallback first = always works)
+-- 2) UI (built-in, KHONG can loadstring/HttpGet)
 ------------------------------------------------------------
 
-local WindUI = nil
-if type(LOAD) == "function" then
-    local urls = {
-        "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua",
-        "https://raw.githubusercontent.com/Footagesus/WindUI/refs/heads/main/dist/main.lua",
-    }
-    for _, url in ipairs(urls) do
-        local src = universalHttpGet(url)
-        if src then
-            local fn, err = LOAD(src, "@WindUI")
-            if fn then
-                local ok, lib = pcall(fn)
-                if ok and lib and type(lib.CreateWindow) == "function" then
-                    WindUI = lib
-                    break
-                end
-            end
-        end
-    end
-end
-if not WindUI and _G.WindUI and type(_G.WindUI.CreateWindow) == "function" then WindUI = _G.WindUI end
-if not WindUI and genv.WindUI and type(genv.WindUI.CreateWindow) == "function" then WindUI = genv.WindUI end
-if not WindUI then
-    WindUI = buildFallbackWindUI()
-    warn("[NTMT HUB] Dung UI fallback - bam nut xanh Open NTMT HUB")
-else
-    warn("[NTMT HUB] WindUI OK v" .. tostring(WindUI.Version or "?"))
-end
+local WindUI = buildFallbackWindUI()
+warn("[NTMT HUB] UI ready - bam nut xanh Open NTMT HUB ben trai man hinh")
 genv.WindUI = WindUI
 _G.WindUI = WindUI
 
-------------------------------------------------------------
--- 3) SERVICES & GAME MODULES
-------------------------------------------------------------
 ------------------------------------------------------------
 -- 3) SERVICES & GAME MODULES
 ------------------------------------------------------------
@@ -2193,52 +2171,15 @@ print("[NTMT HUB] Boot OK | Executor:", Executor)
 
 local guiOk, guiErr = pcall(function()
 
-local windowCfgFull = {
-    Title  = "NTMT HUB | Grow a Garden 2",
-    Author = "Executor: " .. Executor,
-    Folder = "ntmthub",
-    Icon   = "sprout",
-    NewElements = true,
-    HideSearchBar = false,
-    OpenButton = {
-        Title = "Open NTMT HUB",
-        CornerRadius = UDim.new(1, 0),
-        StrokeThickness = 3,
-        Enabled = true,
-        Draggable = true,
-        OnlyMobile = false,
-        Scale = 0.5,
-        Color = ColorSequence.new(hexColor("#30FF6A"), hexColor("#e7ff2f")),
-    },
-    Topbar = { Height = 44, ButtonsType = "Mac" },
-}
-
 local windowCfgSimple = {
     Title = "NTMT HUB | Grow a Garden 2",
     Author = "Executor: " .. Executor,
     Folder = "ntmthub",
     Icon = "sprout",
+    OpenButton = { Title = "Open NTMT HUB", Enabled = true },
 }
 
-local okWin, winOrErr = pcall(function()
-    return WindUI:CreateWindow(windowCfgFull)
-end)
-if okWin and winOrErr then
-    Window = winOrErr
-else
-    warn("[NTMT HUB] CreateWindow full failed:", winOrErr)
-    okWin, winOrErr = pcall(function()
-        return WindUI:CreateWindow(windowCfgSimple)
-    end)
-    if okWin and winOrErr then
-        Window = winOrErr
-    else
-        warn("[NTMT HUB] CreateWindow failed:", winOrErr)
-        Window = WindUI:CreateWindow({ Title = "NTMT HUB", Folder = "ntmthub", Icon = "home" })
-    end
-end
-
-if Window then
+Window = WindUI:CreateWindow(windowCfgSimple)
 Window:Tag({ Title = "v" .. (WindUI.Version or "?"), Icon = "github", Color = hexColor("#1c1c1c"), Border = true })
 Window:Tag({ Title = Executor, Icon = "cpu", Color = hexColor("#257AF7"), Border = true })
 Window:Tag({
