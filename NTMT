@@ -95,14 +95,19 @@ do
     end
 end
 
--- Player data replica (cho Sheckles)
+-- Player data replica (cho Sheckles) - sync wait with timeout
 local gearReplica = nil
 if okPlayerState and PlayerStateClient then
-    task.spawn(function()
-        pcall(function()
-            gearReplica = PlayerStateClient:WaitForLocalReplica(5)
-        end)
+    local ok, rep = pcall(function()
+        if type(PlayerStateClient.WaitForLocalReplica) == "function" then
+            return PlayerStateClient:WaitForLocalReplica(5)
+        elseif type(PlayerStateClient.GetLocalReplica) == "function" then
+            return PlayerStateClient:GetLocalReplica()
+        elseif type(PlayerStateClient.Get) == "function" then
+            return PlayerStateClient:Get()
+        end
     end)
+    if ok then gearReplica = rep end
 end
 
 ------------------------------------------------------------
@@ -664,25 +669,24 @@ local function whitelistAllows(list, itemName)
     return false
 end
 
-local function safePacket(packet, ...)
-    if not packet then return nil end
-    local ok, result = pcall(function(...) return packet:Fire(...) end, ...)
-    if not ok then return nil end
-    return result
-end
-
-local function safeFire(packet, ...)
-    if not packet then return false end
-    local ok = pcall(function(...) packet:Fire(...) end, ...)
-    return ok == true
-end
+-- ============ DATA HELPERS (stock / cost / inventory) ============
 
 local function getSheckles()
-    local attrValue = tonumber(LocalPlayer:GetAttribute("Sheckles"))
-    if attrValue then return attrValue end
-    local data = gearReplica and gearReplica.Data
-    return tonumber(data and data.Sheckles) or 0
+    local v = tonumber(LocalPlayer:GetAttribute("Sheckles"))
+    if v then return v end
+    local ls = LocalPlayer:FindFirstChild("leaderstats")
+    if ls then
+        for _, n in ipairs({ "Sheckles", "sheckles", "Money", "Cash", "Coins" }) do
+            local s = ls:FindFirstChild(n)
+            if s then return tonumber(s.Value) or 0 end
+        end
+    end
+    if gearReplica and gearReplica.Data then
+        return tonumber(gearReplica.Data.Sheckles) or 0
+    end
+    return 0
 end
+
 
 local function getSeedShopItems()
     local stock = Services.ReplicatedStorage:FindFirstChild("StockValues")
@@ -712,9 +716,7 @@ end
 local function getSeedData(seedName)
     if not okSeedData or type(SeedData) ~= "table" then return nil end
     for _, seed in pairs(SeedData) do
-        if type(seed) == "table" and seed.SeedName == seedName then
-            return seed
-        end
+        if type(seed) == "table" and seed.SeedName == seedName then return seed end
     end
     return nil
 end
@@ -752,6 +754,10 @@ local function getGearRestockId()
     return value and tonumber(value.Value) or 0
 end
 
+local function norm2(value)
+    return string.lower(tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
+end
+
 local function getGearCost(gearName)
     if not okGearData or type(GearShopData) ~= "table" then return nil end
     local candidates = { GearShopData.Data, GearShopData.Gears, GearShopData.Items, GearShopData }
@@ -764,7 +770,7 @@ local function getGearCost(gearName)
             for _, data in pairs(list) do
                 if type(data) == "table" then
                     local name = data.ItemName or data.Name or data.GearName
-                    if norm(name) == norm(gearName) then
+                    if name and norm2(name) == norm2(gearName) then
                         return tonumber(data.Cost or data.Price or data.Sheckles)
                     end
                 end
@@ -796,7 +802,7 @@ local function getGearInventoryCount(gearName)
     for _, container in ipairs({ LocalPlayer.Character, LocalPlayer:FindFirstChildOfClass("Backpack") }) do
         if container then
             for _, tool in ipairs(container:GetChildren()) do
-                if tool:IsA("Tool") and norm(tool.Name) == norm(gearName) then
+                if tool:IsA("Tool") and norm2(tool.Name) == norm2(gearName) then
                     total = total + math.max(1, tonumber(tool:GetAttribute("Count")) or 1)
                 end
             end
@@ -805,8 +811,153 @@ local function getGearInventoryCount(gearName)
     return total
 end
 
+-- ============ ROBUST PURCHASE HELPERS ============
+
+local PURCHASE_METHODS = { "Fire", "FireServer", "Send", "Invoke", "InvokeServer" }
+
+local function tryCallPacket(packet, ...)
+    if not packet then return false, "nil packet" end
+    if type(packet) == "function" then
+        local ok, res = pcall(packet, ...)
+        return ok, res
+    end
+    if type(packet) == "table" then
+        for _, m in ipairs(PURCHASE_METHODS) do
+            local fn = packet[m]
+            if type(fn) == "function" then
+                local ok, res = pcall(fn, packet, ...)
+                if ok then return true, res end
+            end
+        end
+    end
+    return false, "no method matched"
+end
+
+-- Tu dong scan Networking de tim category co "Seed"/"Shop" trong key
+local function findNetworkingCategory(...)
+    if not Networking then return nil end
+    local needles = { ... }
+    for k, v in pairs(Networking) do
+        if type(v) == "table" then
+            local kl = string.lower(tostring(k))
+            for _, needle in ipairs(needles) do
+                if kl:find(needle, 1, true) then return v, k end
+            end
+        end
+    end
+    return nil
+end
+
+local function findPurchaseFunction(cat, ...)
+    if type(cat) ~= "table" then return nil end
+    local needles = { ... }
+    for k, v in pairs(cat) do
+        local kl = string.lower(tostring(k))
+        for _, needle in ipairs(needles) do
+            if kl:find(needle, 1, true) then return v, k end
+        end
+    end
+    return nil
+end
+
+-- Cache purchase functions
+local SeedPurchaseFn, SeedPurchaseFnName
+local GearPurchaseFn, GearPurchaseFnName
+
+local function refreshPurchaseFns()
+    if not Networking then return end
+    -- Try direct paths first
+    if type(Networking.SeedShop) == "table" and Networking.SeedShop.PurchaseSeed then
+        SeedPurchaseFn = Networking.SeedShop.PurchaseSeed
+        SeedPurchaseFnName = "Networking.SeedShop.PurchaseSeed"
+    else
+        local cat, catName = findNetworkingCategory("seedshop", "seed_shop", "seeds")
+        if cat then
+            local fn, fnName = findPurchaseFunction(cat, "purchase", "buy")
+            if fn then
+                SeedPurchaseFn = fn
+                SeedPurchaseFnName = ("Networking.%s.%s"):format(tostring(catName), tostring(fnName))
+            end
+        end
+    end
+
+    if type(Networking.GearShop) == "table" and Networking.GearShop.PurchaseGear then
+        GearPurchaseFn = Networking.GearShop.PurchaseGear
+        GearPurchaseFnName = "Networking.GearShop.PurchaseGear"
+    else
+        local cat, catName = findNetworkingCategory("gearshop", "gear_shop", "gear")
+        if cat then
+            local fn, fnName = findPurchaseFunction(cat, "purchase", "buy")
+            if fn then
+                GearPurchaseFn = fn
+                GearPurchaseFnName = ("Networking.%s.%s"):format(tostring(catName), tostring(fnName))
+            end
+        end
+    end
+end
+refreshPurchaseFns()
+print(("[NTMT HUB] SeedPurchaseFn = %s | GearPurchaseFn = %s"):format(
+    tostring(SeedPurchaseFnName or "NIL"), tostring(GearPurchaseFnName or "NIL")))
+
+-- Raw remote fallback scanning ReplicatedStorage
+local RawSeedRemote, RawGearRemote
+local function scanRawShopRemotes()
+    local RS = Services.ReplicatedStorage
+    for _, obj in ipairs(RS:GetDescendants()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            local n = obj.Name:lower()
+            if not RawSeedRemote and (n == "purchaseseed" or n == "buyseed" or n == "purchase_seed" or n == "buy_seed") then
+                RawSeedRemote = obj
+                print("[NTMT HUB] Found raw seed remote:", obj:GetFullName())
+            end
+            if not RawGearRemote and (n == "purchasegear" or n == "buygear" or n == "purchase_gear" or n == "buy_gear") then
+                RawGearRemote = obj
+                print("[NTMT HUB] Found raw gear remote:", obj:GetFullName())
+            end
+        end
+    end
+end
+pcall(scanRawShopRemotes)
+
+local function tryRawRemote(remote, ...)
+    if not remote then return false end
+    if remote:IsA("RemoteEvent") then
+        local ok = pcall(function(...) remote:FireServer(...) end, ...)
+        return ok
+    elseif remote:IsA("RemoteFunction") then
+        local ok, res = pcall(function(...) return remote:InvokeServer(...) end, ...)
+        return ok, res
+    end
+    return false
+end
+
+local function purchaseSeed(seedName)
+    local ok1 = false
+    if SeedPurchaseFn then
+        local s, _ = tryCallPacket(SeedPurchaseFn, seedName)
+        if s then ok1 = true end
+    end
+    if not ok1 and RawSeedRemote then
+        ok1 = tryRawRemote(RawSeedRemote, seedName) and true or false
+    end
+    return ok1
+end
+
+local function purchaseGear(gearName)
+    local ok1 = false
+    if GearPurchaseFn then
+        local s, _ = tryCallPacket(GearPurchaseFn, gearName)
+        if s then ok1 = true end
+    end
+    if not ok1 and RawGearRemote then
+        ok1 = tryRawRemote(RawGearRemote, gearName) and true or false
+    end
+    return ok1
+end
+
 local function buySeedSweep()
     local count = 0
+    if not (SeedPurchaseFn or RawSeedRemote) then return 0 end
     local seeds = {}
     for _, seed in ipairs(getStockSeeds()) do
         if whitelistAllows(Config.BuySeedWhitelist, seed) then
@@ -820,11 +971,11 @@ local function buySeedSweep()
         for _ = 1, amount do
             if count >= Config.MaxBuySeedsPerSweep then return count end
             if seedCost and getSheckles() < seedCost then break end
-            local result = safePacket(Networking and Networking.SeedShop and Networking.SeedShop.PurchaseSeed, seed)
-            if result == false or (type(result) == "table" and result.Success == false) then
+            if purchaseSeed(seed) then
+                count = count + 1
+            else
                 break
             end
-            if result ~= nil then count = count + 1 end
             task.wait(Config.BuySeedDelay)
         end
     end
@@ -832,29 +983,25 @@ local function buySeedSweep()
 end
 
 local function buyGearSweep()
-    if not okGearData then return 0 end
+    if not (GearPurchaseFn or RawGearRemote) then return 0 end
     local restockId = getGearRestockId()
     local bought = 0
     for _, gearName in ipairs(getWantedGearNames()) do
         if bought >= Config.MaxBuyGearsPerSweep then return bought end
         if gearCompletedRestock[gearName] == restockId then
-            -- bỏ qua, đã mua hết restock này
+            -- skip
         else
             local remaining = math.min(getGearRemainingStock(gearName), Config.MaxBuyGearsPerSweep - bought)
             if remaining <= 0 then
                 gearCompletedRestock[gearName] = restockId
             else
                 local cost = getGearCost(gearName)
-                if cost and getSheckles() < cost then
-                    return bought
-                end
+                if cost and getSheckles() < cost then return bought end
                 local stop = false
                 for _ = 1, remaining do
                     if cost and getSheckles() < cost then return bought end
                     local before = getGearInventoryCount(gearName)
-                    if not safeFire(Networking and Networking.GearShop and Networking.GearShop.PurchaseGear, gearName) then
-                        stop = true; break
-                    end
+                    if not purchaseGear(gearName) then stop = true; break end
                     local deadline = os.clock() + 0.8
                     local after = before
                     repeat
@@ -1607,6 +1754,153 @@ InfoTab:Button({
             Content = ("%d fruit/plant"):format(#list),
             Icon = "info",
             Duration = 3,
+        })
+    end
+})
+
+InfoTab:Section({ Title = "DEBUG AUTO BUY" })
+
+InfoTab:Button({
+    Title = "Chan doan Auto Buy (xem console F9)",
+    Icon  = "search",
+    Callback = function()
+        print("===================================")
+        print("[NTMT HUB] === AUTO BUY DIAGNOSTIC ===")
+        print("===================================")
+
+        print("\n[1] MODULES:")
+        print("  okNet         =", okNet, " Networking =", Networking and "OK" or "NIL")
+        print("  okSeedData    =", okSeedData, " SeedData =", SeedData and "OK" or "NIL")
+        print("  okGearData    =", okGearData, " GearShopData =", GearShopData and "OK" or "NIL")
+        print("  okPlayerState =", okPlayerState, " PlayerStateClient =", PlayerStateClient and "OK" or "NIL")
+        print("  gearReplica   =", gearReplica and "OK" or "NIL")
+
+        print("\n[2] CURRENCY:")
+        print("  Attribute Sheckles =", LocalPlayer:GetAttribute("Sheckles"))
+        if gearReplica and gearReplica.Data then
+            print("  Replica   Sheckles =", gearReplica.Data.Sheckles)
+        end
+        print("  getSheckles()      =", getSheckles())
+
+        print("\n[3] NETWORKING SHOP PATHS:")
+        if Networking then
+            print("  Networking.SeedShop   =", Networking.SeedShop)
+            print("  Networking.GearShop   =", Networking.GearShop)
+            if type(Networking.SeedShop) == "table" then
+                print("  SeedShop.PurchaseSeed =", Networking.SeedShop.PurchaseSeed)
+                for k, v in pairs(Networking.SeedShop) do
+                    print("    SeedShop." .. tostring(k), "type:", type(v))
+                end
+            end
+            if type(Networking.GearShop) == "table" then
+                print("  GearShop.PurchaseGear =", Networking.GearShop.PurchaseGear)
+                for k, v in pairs(Networking.GearShop) do
+                    print("    GearShop." .. tostring(k), "type:", type(v))
+                end
+            end
+
+            print("\n  --- ALL NETWORKING CATEGORIES ---")
+            for k, v in pairs(Networking) do
+                if type(v) == "table" then
+                    local keys = {}
+                    for k2, _ in pairs(v) do table.insert(keys, tostring(k2)) end
+                    print(("  %s -> { %s }"):format(tostring(k), table.concat(keys, ", ")))
+                else
+                    print(("  %s = %s (type %s)"):format(tostring(k), tostring(v), type(v)))
+                end
+            end
+        else
+            print("  Networking = nil, KHONG load duoc module!")
+        end
+
+        print("\n[4] STOCK VALUES:")
+        local sv = Services.ReplicatedStorage:FindFirstChild("StockValues")
+        if sv then
+            for _, shop in ipairs(sv:GetChildren()) do
+                print("  StockValues." .. shop.Name)
+                local items = shop:FindFirstChild("Items")
+                if items then
+                    local cnt = 0
+                    for _, c in ipairs(items:GetChildren()) do
+                        if c:IsA("ValueBase") then
+                            cnt = cnt + 1
+                            if cnt <= 5 then
+                                print(("    %s = %s"):format(c.Name, tostring(c.Value)))
+                            end
+                        end
+                    end
+                    print(("    ... total %d items"):format(cnt))
+                end
+            end
+        else
+            print("  StockValues KHONG TON TAI!")
+        end
+
+        print("\n[5] TEST FIRE PurchaseSeed:")
+        local stockSeeds = getStockSeeds()
+        if #stockSeeds == 0 then
+            print("  Khong co seed trong stock de test")
+        else
+            local test = stockSeeds[1]
+            print("  Test mua:", test, " Stock:", getSeedStock(test), " Cost:", getSeedCost(test))
+            if Networking and Networking.SeedShop and Networking.SeedShop.PurchaseSeed then
+                local ok, err = pcall(function()
+                    return Networking.SeedShop.PurchaseSeed:Fire(test)
+                end)
+                print("  Fire result: ok =", ok, " err/result =", err)
+            else
+                print("  KHONG co Networking.SeedShop.PurchaseSeed!")
+            end
+        end
+
+        print("\n[6] TEST FIRE PurchaseGear:")
+        local wantGear = getWantedGearNames()
+        if #wantGear == 0 then
+            print("  Khong co gear de test")
+        else
+            local test = wantGear[1]
+            print("  Test mua:", test, " Stock:", getGearStock(test), " Remaining:", getGearRemainingStock(test), " Cost:", getGearCost(test))
+            if Networking and Networking.GearShop and Networking.GearShop.PurchaseGear then
+                local before = getGearInventoryCount(test)
+                local ok, err = pcall(function()
+                    Networking.GearShop.PurchaseGear:Fire(test)
+                end)
+                task.wait(0.5)
+                local after = getGearInventoryCount(test)
+                print("  Fire ok =", ok, " err =", err)
+                print("  Inventory before/after:", before, "->", after)
+            else
+                print("  KHONG co Networking.GearShop.PurchaseGear!")
+            end
+        end
+
+        print("\n[7] SharedModules children:")
+        local sm = Services.ReplicatedStorage:FindFirstChild("SharedModules")
+        if sm then
+            for _, c in ipairs(sm:GetChildren()) do
+                print("  " .. c.Name, "(" .. c.ClassName .. ")")
+            end
+        end
+
+        print("\n[8] ClientModules children:")
+        local cm = Services.ReplicatedStorage:FindFirstChild("ClientModules")
+        if cm then
+            for _, c in ipairs(cm:GetChildren()) do
+                print("  " .. c.Name, "(" .. c.ClassName .. ")")
+            end
+        else
+            print("  ClientModules KHONG TON TAI")
+        end
+
+        print("\n===================================")
+        print("[NTMT HUB] === END DIAGNOSTIC ===")
+        print("===================================")
+
+        WindUI:Notify({
+            Title = "Diagnostic xong",
+            Content = "Mo console (F9), copy het va gui dev",
+            Icon = "terminal",
+            Duration = 6,
         })
     end
 })
