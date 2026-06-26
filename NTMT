@@ -647,6 +647,7 @@ local Config = {
     BuyGearDelay = 0.08,
     BuySeedSweepDelay = 0.6,
     BuyGearSweepDelay = 1.0,
+    DebugBuy = false,
 }
 
 local gearCompletedRestock = {}
@@ -957,36 +958,61 @@ end
 
 local function buySeedSweep()
     local count = 0
-    if not (SeedPurchaseFn or RawSeedRemote) then return 0 end
+    if not (SeedPurchaseFn or RawSeedRemote) then
+        if Config.DebugBuy then warn("[NTMT HUB] buySeedSweep: NO PURCHASE FN/REMOTE!") end
+        return 0
+    end
     local seeds = {}
     for _, seed in ipairs(getStockSeeds()) do
         if whitelistAllows(Config.BuySeedWhitelist, seed) then
             table.insert(seeds, seed)
         end
     end
+    if Config.DebugBuy then
+        print(("[NTMT HUB] buySeedSweep: %d seeds in whitelist+stock"):format(#seeds))
+    end
     for _, seed in ipairs(seeds) do
         if count >= Config.MaxBuySeedsPerSweep then return count end
         local seedCost = getSeedCost(seed)
-        local amount = math.clamp(getSeedStock(seed), 0, Config.MaxBuySeedsPerSweep - count)
+        local stockAmt = getSeedStock(seed)
+        local amount = math.clamp(stockAmt, 0, Config.MaxBuySeedsPerSweep - count)
+        if Config.DebugBuy then
+            print(("[NTMT HUB] try seed=%s stock=%d cost=%s sheckles=%d"):format(
+                seed, stockAmt, tostring(seedCost), getSheckles()))
+        end
         for _ = 1, amount do
             if count >= Config.MaxBuySeedsPerSweep then return count end
-            if seedCost and getSheckles() < seedCost then break end
+            if seedCost and getSheckles() < seedCost then
+                if Config.DebugBuy then warn("[NTMT HUB]   not enough Sheckles for "..seed) end
+                break
+            end
             if purchaseSeed(seed) then
                 count = count + 1
             else
+                if Config.DebugBuy then warn("[NTMT HUB]   purchaseSeed("..seed..") returned false") end
                 break
             end
             task.wait(Config.BuySeedDelay)
         end
     end
+    if Config.DebugBuy and count > 0 then
+        print(("[NTMT HUB] buySeedSweep DONE: %d purchases fired"):format(count))
+    end
     return count
 end
 
 local function buyGearSweep()
-    if not (GearPurchaseFn or RawGearRemote) then return 0 end
+    if not (GearPurchaseFn or RawGearRemote) then
+        if Config.DebugBuy then warn("[NTMT HUB] buyGearSweep: NO PURCHASE FN/REMOTE!") end
+        return 0
+    end
     local restockId = getGearRestockId()
     local bought = 0
-    for _, gearName in ipairs(getWantedGearNames()) do
+    local wanted = getWantedGearNames()
+    if Config.DebugBuy then
+        print(("[NTMT HUB] buyGearSweep: %d gears wanted (restockId=%s)"):format(#wanted, tostring(restockId)))
+    end
+    for _, gearName in ipairs(wanted) do
         if bought >= Config.MaxBuyGearsPerSweep then return bought end
         if gearCompletedRestock[gearName] == restockId then
             -- skip
@@ -1119,6 +1145,13 @@ pcall(function()
         end
     })
 end)
+
+GAGTab:Toggle({
+    Title = "Debug Buy (in console)",
+    Desc  = "Bat de in log moi lan sweep chay - xem console F9",
+    Default = false,
+    Callback = function(v) Config.DebugBuy = v end
+})
 
 ------------------------------------------------------------
 -- 10) AUTO PLANT (auto detect remote)
