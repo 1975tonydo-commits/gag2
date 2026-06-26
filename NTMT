@@ -67,18 +67,42 @@ local Services = {
 local LocalPlayer = Services.Players.LocalPlayer
 local Gardens = Services.Workspace:WaitForChild("Gardens", 10)
 
-local Networking, FruitValueCalc
+local Networking, FruitValueCalc, SeedData, GearShopData, PlayerStateClient
+local okNet, okSeedData, okGearData, okPlayerState = false, false, false, false
 do
     local SharedModules = Services.ReplicatedStorage:WaitForChild("SharedModules", 10)
     if SharedModules then
-        local ok1, mod1 = pcall(require, SharedModules:WaitForChild("Networking", 5))
-        if ok1 then Networking = mod1 end
+        okNet, Networking = pcall(require, SharedModules:WaitForChild("Networking", 5))
+        if not okNet then Networking = nil end
+
         local fvc = SharedModules:FindFirstChild("FruitValueCalc")
         if fvc then
             local ok2, mod2 = pcall(require, fvc)
             if ok2 then FruitValueCalc = mod2 end
         end
+
+        local sd = SharedModules:FindFirstChild("SeedData")
+        if sd then okSeedData, SeedData = pcall(require, sd) end
+
+        local gsd = SharedModules:FindFirstChild("GearShopData")
+        if gsd then okGearData, GearShopData = pcall(require, gsd) end
     end
+
+    local ClientModules = Services.ReplicatedStorage:FindFirstChild("ClientModules")
+    if ClientModules then
+        local psc = ClientModules:FindFirstChild("PlayerStateClient")
+        if psc then okPlayerState, PlayerStateClient = pcall(require, psc) end
+    end
+end
+
+-- Player data replica (cho Sheckles)
+local gearReplica = nil
+if okPlayerState and PlayerStateClient then
+    task.spawn(function()
+        pcall(function()
+            gearReplica = PlayerStateClient:WaitForLocalReplica(5)
+        end)
+    end)
 end
 
 ------------------------------------------------------------
@@ -606,106 +630,279 @@ GAGTab:Toggle({
 })
 
 ------------------------------------------------------------
--- 9) AUTO BUY (Networking.SeedShop.PurchaseSeed + canAfford)
+-- 9) AUTO BUY (Networking.SeedShop.PurchaseSeed + verify inventory)
 ------------------------------------------------------------
 
--- Lấy reference Networking shop functions
-local PurchaseSeed, PurchaseGear, PurchaseCrate
-local SeedsStockFolder, GearsStockFolder, CratesStockFolder
+local Config = {
+    BuySeedWhitelist = { All = true },
+    GearWhitelist    = { All = true },
+    MaxBuySeedsPerSweep = 200,
+    MaxBuyGearsPerSweep = 50,
+    BuySeedDelay = 0.05,
+    BuyGearDelay = 0.08,
+    BuySeedSweepDelay = 0.6,
+    BuyGearSweepDelay = 1.0,
+}
 
-pcall(function()
-    if Networking then
-        if Networking.SeedShop then PurchaseSeed = Networking.SeedShop.PurchaseSeed end
-        if Networking.GearShop then PurchaseGear = Networking.GearShop.PurchaseGear end
-        if Networking.CrateShop then PurchaseCrate = Networking.CrateShop.PurchaseCrate end
-    end
-    local sv = Services.ReplicatedStorage:FindFirstChild("StockValues")
-    if sv then
-        local seedShop  = sv:FindFirstChild("SeedShop")
-        local gearShop  = sv:FindFirstChild("GearShop")
-        local crateShop = sv:FindFirstChild("CrateShop")
-        SeedsStockFolder  = seedShop  and seedShop:FindFirstChild("Items")
-        GearsStockFolder  = gearShop  and gearShop:FindFirstChild("Items")
-        CratesStockFolder = crateShop and crateShop:FindFirstChild("Items")
-    end
-end)
+local gearCompletedRestock = {}
+local gearInsufficientFundsFailures = 0
+local maxGearInsufficientFundsRetries = 3
 
--- canAfford: dùng GC debug để lấy prices + playerdata từ RestockStoreController
-local prices = {}
-local playerdata = nil
-
-local function scanCanAfford()
-    if not (getgc and debug.info and debug.getupvalue) then return end
-    prices = {}
-    playerdata = nil
-    for _, v in pairs(getgc()) do
-        if type(v) == "function" then
-            local ok, src = pcall(debug.info, v, "s")
-            if ok and src and src:match("RestockStoreController") then
-                local ok2, line = pcall(debug.info, v, "l")
-                if ok2 and line == 575 then
-                    pcall(function()
-                        table.insert(prices, debug.getupvalue(v, 3))
-                        playerdata = debug.getupvalue(v, 9)
-                    end)
-                end
-            end
-        end
-    end
+local function norm(value)
+    return string.lower(tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
-scanCanAfford()
 
-local function canAfford(itemName)
-    if not playerdata or #prices == 0 then return true end  -- fallback: cứ thử mua
-    for _, options in pairs(prices) do
-        local ok, result = pcall(function()
-            local itemData = options[itemName]
-            if not itemData then return false end
-            return (playerdata.Data.Sheckles or 0) >= itemData.price
-        end)
-        if ok and result then return true end
+local function whitelistAllows(list, itemName)
+    if type(list) ~= "table" then return false end
+    if list.All == true then return true end
+    local wanted = norm(itemName):gsub("%s+", "")
+    for name, enabled in pairs(list) do
+        if name ~= "All" and enabled == true and norm(name):gsub("%s+", "") == wanted then
+            return true
+        end
     end
     return false
 end
 
-local function getStockChildren(folder)
-    if not folder then return {} end
-    return folder:GetChildren()
+local function safePacket(packet, ...)
+    if not packet then return nil end
+    local ok, result = pcall(function(...) return packet:Fire(...) end, ...)
+    if not ok then return nil end
+    return result
 end
 
--- Excluded items - user có thể edit
-local buyExcluded = {}
-local buyAllSeeds = true
-local buyAllGears = true
-local buyAllCrates = true
-local selectedSeeds = {}
-local selectedGears = {}
-local selectedCrates = {}
-
-local function shouldBuy(itemName, allFlag, selectedTbl)
-    if table.find(buyExcluded, itemName) then return false end
-    if allFlag then return true end
-    return selectedTbl[itemName] == true
+local function safeFire(packet, ...)
+    if not packet then return false end
+    local ok = pcall(function(...) packet:Fire(...) end, ...)
+    return ok == true
 end
 
--- Lấy danh sách item từ StockValues
+local function getSheckles()
+    local attrValue = tonumber(LocalPlayer:GetAttribute("Sheckles"))
+    if attrValue then return attrValue end
+    local data = gearReplica and gearReplica.Data
+    return tonumber(data and data.Sheckles) or 0
+end
+
+local function getSeedShopItems()
+    local stock = Services.ReplicatedStorage:FindFirstChild("StockValues")
+    local seedShop = stock and stock:FindFirstChild("SeedShop")
+    return seedShop and seedShop:FindFirstChild("Items")
+end
+
+local function getSeedStock(seedName)
+    local items = getSeedShopItems()
+    local value = items and items:FindFirstChild(seedName)
+    return value and tonumber(value.Value) or 0
+end
+
+local function getStockSeeds()
+    local items = getSeedShopItems()
+    local names = {}
+    if not items then return names end
+    for _, value in ipairs(items:GetChildren()) do
+        if value:IsA("ValueBase") and tonumber(value.Value) and value.Value > 0 then
+            table.insert(names, value.Name)
+        end
+    end
+    table.sort(names, function(a, b) return getSeedStock(a) > getSeedStock(b) end)
+    return names
+end
+
+local function getSeedData(seedName)
+    if not okSeedData or type(SeedData) ~= "table" then return nil end
+    for _, seed in pairs(SeedData) do
+        if type(seed) == "table" and seed.SeedName == seedName then
+            return seed
+        end
+    end
+    return nil
+end
+
+local function getSeedCost(seedName)
+    local data = getSeedData(seedName)
+    if type(data) ~= "table" then return nil end
+    return tonumber(data.PurchasePrice or data.Cost or data.Price or data.Sheckles or data.SeedPrice)
+end
+
+local function getGearShopFolder()
+    local stock = Services.ReplicatedStorage:FindFirstChild("StockValues")
+    return stock and stock:FindFirstChild("GearShop")
+end
+
+local function getGearStock(gearName)
+    local shop = getGearShopFolder()
+    local items = shop and shop:FindFirstChild("Items")
+    local value = items and items:FindFirstChild(gearName)
+    return value and tonumber(value.Value) or 0
+end
+
+local function getGearRemainingStock(gearName)
+    local purchased = 0
+    local data = gearReplica and gearReplica.Data
+    local restock = data and data.PurchasedThisRestock
+    local gears = restock and restock.Gears
+    if gears then purchased = tonumber(gears[gearName]) or 0 end
+    return math.max(0, getGearStock(gearName) - purchased)
+end
+
+local function getGearRestockId()
+    local shop = getGearShopFolder()
+    local value = shop and shop:FindFirstChild("UnixLastRestock")
+    return value and tonumber(value.Value) or 0
+end
+
+local function getGearCost(gearName)
+    if not okGearData or type(GearShopData) ~= "table" then return nil end
+    local candidates = { GearShopData.Data, GearShopData.Gears, GearShopData.Items, GearShopData }
+    for _, list in ipairs(candidates) do
+        if type(list) == "table" then
+            local direct = list[gearName]
+            if type(direct) == "table" then
+                return tonumber(direct.Cost or direct.Price or direct.Sheckles)
+            end
+            for _, data in pairs(list) do
+                if type(data) == "table" then
+                    local name = data.ItemName or data.Name or data.GearName
+                    if norm(name) == norm(gearName) then
+                        return tonumber(data.Cost or data.Price or data.Sheckles)
+                    end
+                end
+            end
+        end
+    end
+    return nil
+end
+
+local function getWantedGearNames()
+    local shop = getGearShopFolder()
+    local items = shop and shop:FindFirstChild("Items")
+    local names = {}
+    if not items then return names end
+    for _, value in ipairs(items:GetChildren()) do
+        if value:IsA("ValueBase")
+            and tonumber(value.Value)
+            and value.Value > 0
+            and whitelistAllows(Config.GearWhitelist, value.Name) then
+            table.insert(names, value.Name)
+        end
+    end
+    table.sort(names, function(a, b) return getGearStock(a) > getGearStock(b) end)
+    return names
+end
+
+local function getGearInventoryCount(gearName)
+    local total = 0
+    for _, container in ipairs({ LocalPlayer.Character, LocalPlayer:FindFirstChildOfClass("Backpack") }) do
+        if container then
+            for _, tool in ipairs(container:GetChildren()) do
+                if tool:IsA("Tool") and norm(tool.Name) == norm(gearName) then
+                    total = total + math.max(1, tonumber(tool:GetAttribute("Count")) or 1)
+                end
+            end
+        end
+    end
+    return total
+end
+
+local function buySeedSweep()
+    local count = 0
+    local seeds = {}
+    for _, seed in ipairs(getStockSeeds()) do
+        if whitelistAllows(Config.BuySeedWhitelist, seed) then
+            table.insert(seeds, seed)
+        end
+    end
+    for _, seed in ipairs(seeds) do
+        if count >= Config.MaxBuySeedsPerSweep then return count end
+        local seedCost = getSeedCost(seed)
+        local amount = math.clamp(getSeedStock(seed), 0, Config.MaxBuySeedsPerSweep - count)
+        for _ = 1, amount do
+            if count >= Config.MaxBuySeedsPerSweep then return count end
+            if seedCost and getSheckles() < seedCost then break end
+            local result = safePacket(Networking and Networking.SeedShop and Networking.SeedShop.PurchaseSeed, seed)
+            if result == false or (type(result) == "table" and result.Success == false) then
+                break
+            end
+            if result ~= nil then count = count + 1 end
+            task.wait(Config.BuySeedDelay)
+        end
+    end
+    return count
+end
+
+local function buyGearSweep()
+    if not okGearData then return 0 end
+    local restockId = getGearRestockId()
+    local bought = 0
+    for _, gearName in ipairs(getWantedGearNames()) do
+        if bought >= Config.MaxBuyGearsPerSweep then return bought end
+        if gearCompletedRestock[gearName] == restockId then
+            -- bỏ qua, đã mua hết restock này
+        else
+            local remaining = math.min(getGearRemainingStock(gearName), Config.MaxBuyGearsPerSweep - bought)
+            if remaining <= 0 then
+                gearCompletedRestock[gearName] = restockId
+            else
+                local cost = getGearCost(gearName)
+                if cost and getSheckles() < cost then
+                    return bought
+                end
+                local stop = false
+                for _ = 1, remaining do
+                    if cost and getSheckles() < cost then return bought end
+                    local before = getGearInventoryCount(gearName)
+                    if not safeFire(Networking and Networking.GearShop and Networking.GearShop.PurchaseGear, gearName) then
+                        stop = true; break
+                    end
+                    local deadline = os.clock() + 0.8
+                    local after = before
+                    repeat
+                        task.wait(0.04)
+                        after = getGearInventoryCount(gearName)
+                    until after > before or os.clock() >= deadline
+                    if after <= before then
+                        cost = getGearCost(gearName)
+                        if cost and getSheckles() < cost then
+                            gearInsufficientFundsFailures = gearInsufficientFundsFailures + 1
+                            if gearInsufficientFundsFailures >= maxGearInsufficientFundsRetries then
+                                return bought
+                            end
+                        else
+                            gearInsufficientFundsFailures = 0
+                        end
+                        stop = true; break
+                    end
+                    local added = after - before
+                    gearInsufficientFundsFailures = 0
+                    bought = bought + added
+                    task.wait(Config.BuyGearDelay)
+                end
+                if stop then break end
+                if getGearRemainingStock(gearName) <= 0 then
+                    gearCompletedRestock[gearName] = restockId
+                end
+            end
+        end
+    end
+    return bought
+end
+
+-- Danh sách seed/gear (lấy từ stock folder để hiện dropdown)
 local function listStockNames(folder)
     local out = {}
     if not folder then return out end
     for _, c in ipairs(folder:GetChildren()) do
-        if c:IsA("IntValue") or c:IsA("NumberValue") then
-            table.insert(out, c.Name)
-        end
+        if c:IsA("ValueBase") then table.insert(out, c.Name) end
     end
     table.sort(out)
     return out
 end
 
-local SEEDS_LIST  = listStockNames(SeedsStockFolder)
-local GEARS_LIST  = listStockNames(GearsStockFolder)
-local CRATES_LIST = listStockNames(CratesStockFolder)
+local SEEDS_LIST = listStockNames(getSeedShopItems())
+local GEARS_LIST = listStockNames(getGearShopFolder() and getGearShopFolder():FindFirstChild("Items"))
 
-GAGTab:Section({ Title = "Auto Buy Seed / Gear / Crate" })
+GAGTab:Section({ Title = "Auto Buy Seed & Gear" })
 
 GAGTab:Toggle({
     Title = "Auto Buy Seed",
@@ -716,7 +913,9 @@ GAGTab:Toggle({
 GAGTab:Toggle({
     Title = "Mua TẤT CẢ Seed",
     Default = true,
-    Callback = function(v) buyAllSeeds = v end
+    Callback = function(v)
+        Config.BuySeedWhitelist.All = v
+    end
 })
 
 pcall(function()
@@ -727,11 +926,13 @@ pcall(function()
         Multi = true,
         AllowNone = true,
         Callback = function(sel)
-            selectedSeeds = {}
+            -- Reset (giữ All)
+            local keepAll = Config.BuySeedWhitelist.All
+            Config.BuySeedWhitelist = { All = keepAll }
             if type(sel) == "table" then
                 for k, v in pairs(sel) do
-                    if type(v) == "string" then selectedSeeds[v] = true
-                    elseif type(k) == "string" and v then selectedSeeds[k] = true end
+                    if type(v) == "string" then Config.BuySeedWhitelist[v] = true
+                    elseif type(k) == "string" and v then Config.BuySeedWhitelist[k] = true end
                 end
             end
         end
@@ -747,7 +948,9 @@ GAGTab:Toggle({
 GAGTab:Toggle({
     Title = "Mua TẤT CẢ Gear",
     Default = true,
-    Callback = function(v) buyAllGears = v end
+    Callback = function(v)
+        Config.GearWhitelist.All = v
+    end
 })
 
 pcall(function()
@@ -758,42 +961,12 @@ pcall(function()
         Multi = true,
         AllowNone = true,
         Callback = function(sel)
-            selectedGears = {}
+            local keepAll = Config.GearWhitelist.All
+            Config.GearWhitelist = { All = keepAll }
             if type(sel) == "table" then
                 for k, v in pairs(sel) do
-                    if type(v) == "string" then selectedGears[v] = true
-                    elseif type(k) == "string" and v then selectedGears[k] = true end
-                end
-            end
-        end
-    })
-end)
-
-GAGTab:Toggle({
-    Title = "Auto Buy Crate",
-    Default = false,
-    Callback = function(s) genv.ftgs_AutoBuyCrate = s end
-})
-
-GAGTab:Toggle({
-    Title = "Mua TẤT CẢ Crate",
-    Default = true,
-    Callback = function(v) buyAllCrates = v end
-})
-
-pcall(function()
-    GAGTab:Dropdown({
-        Title = "Chọn Crate (khi 'Mua TẤT CẢ' = OFF)",
-        Values = CRATES_LIST,
-        Value = nil,
-        Multi = true,
-        AllowNone = true,
-        Callback = function(sel)
-            selectedCrates = {}
-            if type(sel) == "table" then
-                for k, v in pairs(sel) do
-                    if type(v) == "string" then selectedCrates[v] = true
-                    elseif type(k) == "string" and v then selectedCrates[k] = true end
+                    if type(v) == "string" then Config.GearWhitelist[v] = true
+                    elseif type(k) == "string" and v then Config.GearWhitelist[k] = true end
                 end
             end
         end
@@ -1271,48 +1444,20 @@ task.spawn(function()
     end
 end)
 
--- Auto Buy: dùng Networking.SeedShop.PurchaseSeed + canAfford check
--- Re-scan canAfford mỗi 30s phòng restock controller đổi function
+-- Auto Buy Seed (sweep based)
 task.spawn(function()
-    while task.wait(30) do
-        pcall(scanCanAfford)
+    while task.wait(Config.BuySeedSweepDelay) do
+        if genv.ftgs_AutoBuySeed then
+            pcall(buySeedSweep)
+        end
     end
 end)
 
+-- Auto Buy Gear (sweep based, verify inventory)
 task.spawn(function()
-    while task.wait(0.05) do
-        -- SEEDS
-        if genv.ftgs_AutoBuySeed and PurchaseSeed and SeedsStockFolder then
-            for _, seed in ipairs(SeedsStockFolder:GetChildren()) do
-                if not genv.ftgs_AutoBuySeed then break end
-                if (seed:IsA("IntValue") or seed:IsA("NumberValue")) and seed.Value > 0 then
-                    if shouldBuy(seed.Name, buyAllSeeds, selectedSeeds) and canAfford(seed.Name) then
-                        pcall(function() PurchaseSeed:Fire(seed.Name) end)
-                    end
-                end
-            end
-        end
-        -- GEARS
-        if genv.ftgs_AutoBuyGear and PurchaseGear and GearsStockFolder then
-            for _, gear in ipairs(GearsStockFolder:GetChildren()) do
-                if not genv.ftgs_AutoBuyGear then break end
-                if (gear:IsA("IntValue") or gear:IsA("NumberValue")) and gear.Value > 0 then
-                    if shouldBuy(gear.Name, buyAllGears, selectedGears) and canAfford(gear.Name) then
-                        pcall(function() PurchaseGear:Fire(gear.Name) end)
-                    end
-                end
-            end
-        end
-        -- CRATES
-        if genv.ftgs_AutoBuyCrate and PurchaseCrate and CratesStockFolder then
-            for _, crate in ipairs(CratesStockFolder:GetChildren()) do
-                if not genv.ftgs_AutoBuyCrate then break end
-                if (crate:IsA("IntValue") or crate:IsA("NumberValue")) and crate.Value > 0 then
-                    if shouldBuy(crate.Name, buyAllCrates, selectedCrates) and canAfford(crate.Name) then
-                        pcall(function() PurchaseCrate:Fire(crate.Name) end)
-                    end
-                end
-            end
+    while task.wait(Config.BuyGearSweepDelay) do
+        if genv.ftgs_AutoBuyGear then
+            pcall(buyGearSweep)
         end
     end
 end)
