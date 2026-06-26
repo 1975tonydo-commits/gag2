@@ -62,6 +62,7 @@ local Services = {
     Players           = cloneref(game:GetService("Players")),
     RunService        = cloneref(game:GetService("RunService")),
     VirtualUser       = cloneref(game:GetService("VirtualUser")),
+    TweenService      = cloneref(game:GetService("TweenService")),
 }
 
 local LocalPlayer = Services.Players.LocalPlayer
@@ -162,6 +163,80 @@ local function getRoot(player)
     return hum and hum.RootPart
 end
 
+------------------------------------------------------------
+-- BYPASS TWEEN (smooth TP - bypass anti-cheat)
+------------------------------------------------------------
+
+-- Global toggle - set true de TAT CA teleport bypass dung tween
+local useBypassTween = false
+local tweenSpeed = 350  -- studs/giay (cang cao cang nhanh, thap = an toan hon)
+
+-- Bypass tween: di chuyen muot nguoi choi den vi tri dich bang TweenService
+-- thay vi set CFrame truc tiep (server kho detect hon)
+local function bypassTween(targetCFrame, customSpeed)
+    local char = LocalPlayer.Character
+    if not char then return false end
+    local hrp = char:FindFirstChild("HumanoidRootPart")
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not (hrp and hum) then return false end
+
+    local speed = customSpeed or tweenSpeed
+    local distance = (hrp.Position - targetCFrame.Position).Magnitude
+    if distance < 1 then
+        hrp.CFrame = targetCFrame
+        return true
+    end
+    local duration = math.clamp(distance / speed, 0.05, 5)
+
+    -- Tat AutoRotate de tween khong bi xoay loan
+    local oldAutoRotate = hum.AutoRotate
+    hum.AutoRotate = false
+
+    -- Tat platform stand de khong bi gravity keo xuong
+    local oldPlatformStand = hum.PlatformStand
+    hum.PlatformStand = true
+
+    local tweenInfo = TweenInfo.new(
+        duration,
+        Enum.EasingStyle.Linear,
+        Enum.EasingDirection.Out
+    )
+    local tween = Services.TweenService:Create(hrp, tweenInfo, { CFrame = targetCFrame })
+    tween:Play()
+
+    -- Wait tween xong (toi da duration + 0.1s safety)
+    local done = false
+    tween.Completed:Connect(function() done = true end)
+    local deadline = os.clock() + duration + 0.1
+    while not done and os.clock() < deadline do
+        Services.RunService.Heartbeat:Wait()
+        -- Reset velocity de khong bi physics day
+        pcall(function() hrp.Velocity = Vector3.zero end)
+    end
+
+    -- Restore
+    hum.AutoRotate = oldAutoRotate
+    hum.PlatformStand = oldPlatformStand
+
+    -- Bao dam toi noi (tween co the bi off 1 chut)
+    pcall(function() hrp.CFrame = targetCFrame end)
+    return true
+end
+
+-- Wrapper: dung bypass tween neu useBypassTween = true, else instant TP
+local function smartTeleport(targetCFrame, customSpeed)
+    if useBypassTween then
+        return bypassTween(targetCFrame, customSpeed)
+    end
+    local hrp = getRoot(LocalPlayer)
+    if hrp then
+        pcall(function() hrp.CFrame = targetCFrame end)
+        return true
+    end
+    return false
+end
+
+
 local function getOwnedPlot()
     if not Gardens then return nil end
     for _, plot in ipairs(Gardens:GetChildren()) do
@@ -233,11 +308,34 @@ local function getPartFromObj(obj)
     return obj:FindFirstChildWhichIsA("BasePart", true)
 end
 
+-- ============ HARVEST BYPASS ============
+-- 1. Validate plant truoc khi fire (anti invalid-data detection)
+-- 2. Verify ownership (plant phai trong plot cua minh)
+-- 3. Rate limit + random jitter (anti rate-limit detection)
+local lastHarvestFire = 0
+local harvestMinInterval = 0.03  -- 30ms toi thieu giua 2 lan fire (~33/s)
+
 local function harvestPlant(plant)
-    if not plant or not Networking then return false end
+    if not plant or not plant.Parent or not Networking then return false end
     local id = plant:GetAttribute("PlantId")
-    local fruitid = plant:GetAttribute("FruitId") or ""
     if not id then return false end
+    local fruitid = plant:GetAttribute("FruitId") or ""
+
+    -- Rate limit voi jitter ngau nhien (anti pattern detection)
+    local now = os.clock()
+    local elapsed = now - lastHarvestFire
+    if elapsed < harvestMinInterval then
+        task.wait(harvestMinInterval - elapsed + math.random() * 0.01)
+    end
+    lastHarvestFire = os.clock()
+
+    -- Verify plant van trong plot cua minh truoc khi fire
+    -- (tranh server reject vi plant da bi harvest hoac di chuyen)
+    local myPlot = getCachedOwnedPlot()
+    if myPlot and not plant:IsDescendantOf(myPlot) then
+        return false
+    end
+
     local ok = pcall(function()
         Networking.Garden.CollectFruit:Fire(id, fruitid)
     end)
@@ -320,6 +418,35 @@ GAGTab:Button({
 })
 
 ------------------------------------------------------------
+-- 6b) UI - BYPASS TWEEN (apply cho moi TP)
+------------------------------------------------------------
+
+GAGTab:Section({ Title = "Bypass Tween (TP) " })
+
+GAGTab:Toggle({
+    Title = "Bat Bypass Tween",
+    Desc  = "TP muot bang TweenService thay vi instant - kho bi anticheat detect",
+    Default = false,
+    Callback = function(v)
+        useBypassTween = v
+        WindUI:Notify({
+            Title = "Bypass Tween",
+            Content = v and "DA BAT" or "Da tat",
+            Icon = v and "play" or "pause",
+            Duration = 2,
+        })
+    end
+})
+
+GAGTab:Slider({
+    Title = "Toc do Tween (studs/giay)",
+    Step  = 10,
+    Value = { Min = 50, Max = 1000, Default = 350 },
+    Desc  = "Cang cao cang nhanh. ~200 = an toan, 350 = balanced, 1000 = nhanh",
+    Callback = function(v) tweenSpeed = v end
+})
+
+------------------------------------------------------------
 -- 7) UI - AUTO SELL
 ------------------------------------------------------------
 
@@ -395,15 +522,34 @@ local function findSellStandCFrame()
     return nil
 end
 
+-- ============ SELL BYPASS ============
+-- 1. Rate limit (server thuong co cooldown ~1s cho sell)
+-- 2. Random jitter de fire khong dung pattern 0.1s/lan
+-- 3. Chi fire 1 remote duy nhat thay vi spam tat ca
+local lastSellFire = 0
+local sellMinInterval = 0.5  -- toi thieu 0.5s/lan sell (giong nguoi choi)
+
 local function fireSellRemotes()
-    for _, rem in ipairs(cachedSellRemotes) do
+    local now = os.clock()
+    if now - lastSellFire < sellMinInterval then
+        return false
+    end
+    lastSellFire = now + (math.random() * 0.15)  -- jitter
+
+    -- Uu tien Networking (cleaner, ko bi flag)
+    if #cachedSellNetworks > 0 then
+        pcall(function() cachedSellNetworks[1]:Fire() end)
+        return true
+    end
+    -- Fallback raw remote
+    if #cachedSellRemotes > 0 then
+        local rem = cachedSellRemotes[1]
         pcall(function()
             if rem:IsA("RemoteEvent") then rem:FireServer() else rem:InvokeServer() end
         end)
+        return true
     end
-    for _, fn in ipairs(cachedSellNetworks) do
-        pcall(function() fn:Fire() end)
-    end
+    return false
 end
 
 local function sellInventory()
@@ -540,7 +686,8 @@ local function returnToOwnPlot()
     local ref = myPlot and myPlot:FindFirstChild("PlotSizeReference")
     local root = getRoot(LocalPlayer)
     if ref and root then
-        for _ = 1, 5 do
+        smartTeleport(ref.CFrame)
+        for _ = 1, 3 do
             pcall(function() root.CFrame = ref.CFrame end)
             task.wait(0.05)
         end
@@ -604,7 +751,7 @@ local function stealFruit(fruit)
     local root = getRoot(LocalPlayer)
     if not root then return false end
     for _ = 1, 2 do
-        pcall(function() root.CFrame = hp.CFrame end)
+        smartTeleport(hp.CFrame)
         pcall(function() Networking.Steal.BeginSteal:Fire(userId, plantId, fruitId) end)
         pcall(function() Networking.Steal.CompleteSteal:Fire() end)
         task.wait(0.05)
@@ -639,8 +786,10 @@ GAGTab:Toggle({
 ------------------------------------------------------------
 
 local Config = {
-    BuySeedWhitelist = { All = true },
-    GearWhitelist    = { All = true },
+    BuySeedWhitelist = {},
+    GearWhitelist    = {},
+    BuyAllSeeds = true,   -- ON = mua tat ca seed (giong chon het trong dropdown)
+    BuyAllGears = true,   -- ON = mua tat ca gear (giong chon het trong dropdown)
     MaxBuySeedsPerSweep = 200,
     MaxBuyGearsPerSweep = 50,
     BuySeedDelay = 0.05,
@@ -676,12 +825,12 @@ local function norm(value)
     return string.lower(tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
 
+-- Kiem tra item co trong dropdown selection khong
 local function whitelistAllows(list, itemName)
     if type(list) ~= "table" then return false end
-    if list.All == true then return true end
     local wanted = norm(itemName):gsub("%s+", "")
     for name, enabled in pairs(list) do
-        if name ~= "All" and enabled == true and norm(name):gsub("%s+", "") == wanted then
+        if enabled == true and norm(name):gsub("%s+", "") == wanted then
             return true
         end
     end
@@ -806,11 +955,11 @@ local function getWantedGearNames()
     local names = {}
     if not items then return names end
     for _, value in ipairs(items:GetChildren()) do
-        if value:IsA("ValueBase")
-            and tonumber(value.Value)
-            and value.Value > 0
-            and whitelistAllows(Config.GearWhitelist, value.Name) then
-            table.insert(names, value.Name)
+        if value:IsA("ValueBase") and tonumber(value.Value) and value.Value > 0 then
+            -- Mua TAT CA ON => lay het | OFF => chi lay gear co trong dropdown
+            if Config.BuyAllGears or whitelistAllows(Config.GearWhitelist, value.Name) then
+                table.insert(names, value.Name)
+            end
         end
     end
     table.sort(names, function(a, b) return getGearStock(a) > getGearStock(b) end)
@@ -982,17 +1131,20 @@ local function buySeedSweep()
         return 0
     end
     local seeds = {}
+    -- Mua TAT CA ON => lay het stock seeds (da loai gold/rainbow/horned-melon/mega/poison-ivy)
+    -- Mua TAT CA OFF => chi lay seeds co trong dropdown
     for _, seed in ipairs(getStockSeeds()) do
-        if whitelistAllows(Config.BuySeedWhitelist, seed) then
+        if Config.BuyAllSeeds or whitelistAllows(Config.BuySeedWhitelist, seed) then
             table.insert(seeds, seed)
         end
     end
     if Config.DebugBuy then
-        print(("[NTMT HUB] buySeedSweep: %d seeds (All=%s, sheckles=%d)"):format(
-            #seeds, tostring(Config.BuySeedWhitelist.All), getSheckles()))
+        print(("[NTMT HUB] buySeedSweep: %d seeds (BuyAll=%s, sheckles=%d)"):format(
+            #seeds, tostring(Config.BuyAllSeeds), getSheckles()))
         if #seeds == 0 then
             local stockAll = getStockSeeds()
-            warn(("[NTMT HUB]   STOCK has %d seeds but whitelist matched 0!"):format(#stockAll))
+            warn(("[NTMT HUB]   STOCK has %d seeds but matched 0! (BuyAll=%s)"):format(
+                #stockAll, tostring(Config.BuyAllSeeds)))
         end
     end
     for _, seed in ipairs(seeds) do
@@ -1124,9 +1276,11 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Mua TẤT CẢ Seed",
+    Desc  = "ON = mua het seed trong shop (giong chon all trong dropdown)",
     Default = true,
     Callback = function(v)
-        Config.BuySeedWhitelist.All = v
+        Config.BuyAllSeeds = v
+        if Config.DebugBuy then print("[NTMT HUB] BuyAllSeeds =", v) end
     end
 })
 
@@ -1138,9 +1292,7 @@ pcall(function()
         Multi = true,
         AllowNone = true,
         Callback = function(sel)
-            -- Reset (giữ All)
-            local keepAll = Config.BuySeedWhitelist.All
-            Config.BuySeedWhitelist = { All = keepAll }
+            Config.BuySeedWhitelist = {}
             if type(sel) == "table" then
                 for k, v in pairs(sel) do
                     if type(v) == "string" then Config.BuySeedWhitelist[v] = true
@@ -1169,9 +1321,11 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Mua TẤT CẢ Gear",
+    Desc  = "ON = mua het gear trong shop (giong chon all trong dropdown)",
     Default = true,
     Callback = function(v)
-        Config.GearWhitelist.All = v
+        Config.BuyAllGears = v
+        if Config.DebugBuy then print("[NTMT HUB] BuyAllGears =", v) end
     end
 })
 
@@ -1183,8 +1337,7 @@ pcall(function()
         Multi = true,
         AllowNone = true,
         Callback = function(sel)
-            local keepAll = Config.GearWhitelist.All
-            Config.GearWhitelist = { All = keepAll }
+            Config.GearWhitelist = {}
             if type(sel) == "table" then
                 for k, v in pairs(sel) do
                     if type(v) == "string" then Config.GearWhitelist[v] = true
@@ -1419,8 +1572,8 @@ local function attackPlayer(target)
     local myRoot = getRoot(LocalPlayer)
     if not (targetRoot and myRoot) then return end
 
-    -- TP tới player
-    pcall(function() myRoot.CFrame = targetRoot.CFrame + Vector3.new(0, 0, 2) end)
+    -- TP toi player (bypass tween neu bat)
+    smartTeleport(targetRoot.CFrame + Vector3.new(0, 0, 2))
     task.wait(0.05)
 
     -- Equip shovel nếu chưa
@@ -1507,13 +1660,13 @@ local function fireCollect(item)
     local part = getPartFromObj(item)
     if not part then return end
     local origCF = hrp.CFrame
-    pcall(function() hrp.CFrame = CFrame.new(part.Position + Vector3.new(0, 3, 0)) end)
+    smartTeleport(CFrame.new(part.Position + Vector3.new(0, 3, 0)))
     task.wait(0.06)
     local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
     if prompt and fireproximityprompt then
         pcall(fireproximityprompt, prompt, 0)
     end
-    pcall(function() hrp.CFrame = origCF end)
+    smartTeleport(origCF)
 end
 
 GAGTab:Toggle({
