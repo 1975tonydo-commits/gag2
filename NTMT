@@ -654,6 +654,24 @@ local gearCompletedRestock = {}
 local gearInsufficientFundsFailures = 0
 local maxGearInsufficientFundsRetries = 3
 
+-- Seeds KHONG bao gio mua (special / event / mega / mutation seeds)
+-- Match theo substring, lowercase
+local SEED_EXCLUDE_PATTERNS = {
+    "gold",
+    "rainbow",
+    "horned melon",
+    "mega",
+    "poison ivy",
+}
+
+local function isSeedExcluded(seedName)
+    local low = string.lower(tostring(seedName or ""))
+    for _, pat in ipairs(SEED_EXCLUDE_PATTERNS) do
+        if string.find(low, pat, 1, true) then return true end
+    end
+    return false
+end
+
 local function norm(value)
     return string.lower(tostring(value or ""):gsub("^%s+", ""):gsub("%s+$", ""))
 end
@@ -706,7 +724,8 @@ local function getStockSeeds()
     local names = {}
     if not items then return names end
     for _, value in ipairs(items:GetChildren()) do
-        if value:IsA("ValueBase") and tonumber(value.Value) and value.Value > 0 then
+        if value:IsA("ValueBase") and tonumber(value.Value) and value.Value > 0
+            and not isSeedExcluded(value.Name) then
             table.insert(names, value.Name)
         end
     end
@@ -969,7 +988,12 @@ local function buySeedSweep()
         end
     end
     if Config.DebugBuy then
-        print(("[NTMT HUB] buySeedSweep: %d seeds in whitelist+stock"):format(#seeds))
+        print(("[NTMT HUB] buySeedSweep: %d seeds (All=%s, sheckles=%d)"):format(
+            #seeds, tostring(Config.BuySeedWhitelist.All), getSheckles()))
+        if #seeds == 0 then
+            local stockAll = getStockSeeds()
+            warn(("[NTMT HUB]   STOCK has %d seeds but whitelist matched 0!"):format(#stockAll))
+        end
     end
     for _, seed in ipairs(seeds) do
         if count >= Config.MaxBuySeedsPerSweep then return count end
@@ -1072,7 +1096,12 @@ local function listStockNames(folder)
     return out
 end
 
-local SEEDS_LIST = listStockNames(getSeedShopItems())
+local SEEDS_LIST_RAW = listStockNames(getSeedShopItems())
+local SEEDS_LIST = {}
+for _, n in ipairs(SEEDS_LIST_RAW) do
+    if not isSeedExcluded(n) then table.insert(SEEDS_LIST, n) end
+end
+print(("[NTMT HUB] Seed dropdown: %d items (excluded %d)"):format(#SEEDS_LIST, #SEEDS_LIST_RAW - #SEEDS_LIST))
 local GEARS_LIST = listStockNames(getGearShopFolder() and getGearShopFolder():FindFirstChild("Items"))
 
 GAGTab:Section({ Title = "Auto Buy Seed & Gear" })
