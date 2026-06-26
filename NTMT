@@ -5,34 +5,84 @@
     Platforms: iOS / Android / PC / VNG / Mac
 ]]
 
+print("[NTMT HUB] Starting...")
+
 ------------------------------------------------------------
 -- 1) UNIVERSAL EXECUTOR COMPATIBILITY LAYER
 ------------------------------------------------------------
 
-local Executor = (identifyexecutor and identifyexecutor()) or
-                 (getexecutorname and getexecutorname()) or
-                 "Unknown"
+local LOAD = loadstring or load
+if type(LOAD) ~= "function" then
+    error("[NTMT HUB] Executor thieu loadstring/load - khong the chay script")
+end
+
+local function safeGetEnv()
+    if type(getgenv) == "function" then
+        local ok, env = pcall(getgenv)
+        if ok and type(env) == "table" then return env end
+    end
+    return _G
+end
+
+local Executor = "Unknown"
+if type(identifyexecutor) == "function" then
+    local ok, name = pcall(identifyexecutor)
+    if ok and name then Executor = tostring(name) end
+elseif type(getexecutorname) == "function" then
+    local ok, name = pcall(getexecutorname)
+    if ok and name then Executor = tostring(name) end
+end
 
 local cloneref = cloneref or clonereference or function(o) return o end
+
+local function hexColor(hex)
+    if Color3.fromHex then
+        local ok, c = pcall(Color3.fromHex, hex)
+        if ok and c then return c end
+    end
+    hex = tostring(hex or ""):gsub("#", "")
+    if #hex < 6 then return Color3.new(1, 1, 1) end
+    return Color3.new(
+        tonumber(hex:sub(1, 2), 16) / 255,
+        tonumber(hex:sub(3, 4), 16) / 255,
+        tonumber(hex:sub(5, 6), 16) / 255
+    )
+end
 
 local function universalHttpGet(url)
     local ok, body = pcall(function()
         return game:HttpGet(url)
     end)
-    if ok and body and #body > 0 then return body end
+    if ok and type(body) == "string" and #body > 50 and not body:find("404") then return body end
 
     local req = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
     if req then
         local res = req({ Url = url, Method = "GET" })
-        if res and (res.Body or res.body) then
-            return res.Body or res.body
+        if res and type(res.Body or res.body) == "string" then
+            body = res.Body or res.body
+            if #body > 50 and not body:find("404") then return body end
         end
     end
-    error("No HTTP function available on executor: " .. tostring(Executor))
+    return nil
+end
+
+local function runLuaSource(source, label)
+    if type(source) ~= "string" or #source < 50 then
+        return nil, "empty source"
+    end
+    local fn, compileErr = LOAD(source, label or "@ntmt")
+    if not fn then
+        return nil, compileErr or "compile failed"
+    end
+    local ok, result = pcall(fn)
+    if not ok then
+        return nil, result
+    end
+    return result
 end
 
 local hasFs = (writefile and readfile and isfile) ~= nil
-local genv  = getgenv and getgenv() or _G
+local genv  = safeGetEnv()
 
 ------------------------------------------------------------
 -- 2) LOAD WINDUI
@@ -40,29 +90,37 @@ local genv  = getgenv and getgenv() or _G
 
 local WindUI
 do
-    local function tryLoadWindUI(url)
-        local ok, lib = pcall(function()
-            return loadstring(universalHttpGet(url))()
-        end)
-        if ok then
-            if lib and type(lib.CreateWindow) == "function" then return lib end
-            if _G.WindUI and type(_G.WindUI.CreateWindow) == "function" then return _G.WindUI end
-            if genv.WindUI and type(genv.WindUI.CreateWindow) == "function" then return genv.WindUI end
-        end
+    local function pickWindUI(lib)
+        if lib and type(lib.CreateWindow) == "function" then return lib end
+        if _G.WindUI and type(_G.WindUI.CreateWindow) == "function" then return _G.WindUI end
+        if genv.WindUI and type(genv.WindUI.CreateWindow) == "function" then return genv.WindUI end
         return nil
     end
 
-    WindUI = tryLoadWindUI("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua")
-    if not WindUI then
-        warn("[WindUI] dist/main.lua failed, trying main_example.lua")
-        WindUI = tryLoadWindUI("https://raw.githubusercontent.com/Footagesus/WindUI/refs/heads/main/main_example.lua")
+    local WINDUI_URLS = {
+        "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua",
+        "https://raw.githubusercontent.com/Footagesus/WindUI/refs/heads/main/dist/main.lua",
+    }
+
+    for _, url in ipairs(WINDUI_URLS) do
+        local source = universalHttpGet(url)
+        if source then
+            local lib, err = runLuaSource(source, "@WindUI")
+            WindUI = pickWindUI(lib)
+            if WindUI then break end
+            warn("[WindUI] Load failed from", url, err)
+        else
+            warn("[WindUI] HTTP failed:", url)
+        end
     end
+
     if not WindUI then
-        WindUI = (_G and _G.WindUI) or (genv and genv.WindUI)
+        error("[NTMT HUB] Khong tai duoc WindUI - bat HttpGet tren executor hoac thu lai")
     end
-    if not WindUI then
-        error("[NTMT HUB] Cannot load WindUI - check executor HTTP")
-    end
+
+    genv.WindUI = WindUI
+    _G.WindUI = WindUI
+    print("[NTMT HUB] WindUI OK v" .. tostring(WindUI.Version or "?"))
 end
 
 ------------------------------------------------------------
@@ -614,7 +672,11 @@ local function norm(value)
 end
 
 local function notify(title, content, icon, duration)
-    WindUI:Notify({ Title = title, Content = content, Icon = icon or "info", Duration = duration or 2 })
+    pcall(function()
+        if WindUI and type(WindUI.Notify) == "function" then
+            WindUI:Notify({ Title = title, Content = content, Icon = icon or "info", Duration = duration or 2 })
+        end
+    end)
 end
 
 local function getHumanoid(player)
@@ -2184,9 +2246,11 @@ end)
 -- 7) WINDOW & TABS
 ------------------------------------------------------------
 
+print("[NTMT HUB] Boot OK | Executor:", Executor)
+
 local guiOk, guiErr = pcall(function()
 
-Window = WindUI:CreateWindow({
+local windowCfgFull = {
     Title  = "NTMT HUB | Grow a Garden 2",
     Author = "Executor: " .. Executor,
     Folder = "ntmthub",
@@ -2201,17 +2265,41 @@ Window = WindUI:CreateWindow({
         Draggable = true,
         OnlyMobile = false,
         Scale = 0.5,
-        Color = ColorSequence.new(Color3.fromHex("#30FF6A"), Color3.fromHex("#e7ff2f")),
+        Color = ColorSequence.new(hexColor("#30FF6A"), hexColor("#e7ff2f")),
     },
     Topbar = { Height = 44, ButtonsType = "Mac" },
-})
+}
 
-Window:Tag({ Title = "v" .. (WindUI.Version or "?"), Icon = "github", Color = Color3.fromHex("#1c1c1c"), Border = true })
-Window:Tag({ Title = Executor, Icon = "cpu", Color = Color3.fromHex("#257AF7"), Border = true })
+local windowCfgSimple = {
+    Title = "NTMT HUB | Grow a Garden 2",
+    Author = "Executor: " .. Executor,
+    Folder = "ntmthub",
+    Icon = "sprout",
+}
+
+local okWin, winOrErr = pcall(function()
+    return WindUI:CreateWindow(windowCfgFull)
+end)
+if okWin and winOrErr then
+    Window = winOrErr
+else
+    warn("[NTMT HUB] CreateWindow full failed:", winOrErr)
+    okWin, winOrErr = pcall(function()
+        return WindUI:CreateWindow(windowCfgSimple)
+    end)
+    if okWin and winOrErr then
+        Window = winOrErr
+    else
+        error(tostring(winOrErr))
+    end
+end
+
+Window:Tag({ Title = "v" .. (WindUI.Version or "?"), Icon = "github", Color = hexColor("#1c1c1c"), Border = true })
+Window:Tag({ Title = Executor, Icon = "cpu", Color = hexColor("#257AF7"), Border = true })
 Window:Tag({
     Title = Networking and "Networking OK" or "Networking FAIL",
     Icon = Networking and "check" or "x",
-    Color = Networking and Color3.fromHex("#10C550") or Color3.fromHex("#EF4F1D"),
+    Color = Networking and hexColor("#10C550") or hexColor("#EF4F1D"),
     Border = true,
 })
 
@@ -2688,6 +2776,22 @@ if not guiOk then
                 Duration = 10,
             })
         end
+    end)
+    pcall(function()
+        local pg = LocalPlayer:WaitForChild("PlayerGui", 5)
+        if not pg then return end
+        local sg = Instance.new("ScreenGui")
+        sg.Name = "NTMT_HUB_Error"
+        sg.ResetOnSpawn = false
+        sg.Parent = pg
+        local lbl = Instance.new("TextLabel")
+        lbl.Size = UDim2.new(0.8, 0, 0, 80)
+        lbl.Position = UDim2.new(0.1, 0, 0, 20)
+        lbl.BackgroundColor3 = Color3.fromRGB(30, 30, 30)
+        lbl.TextColor3 = Color3.fromRGB(255, 80, 80)
+        lbl.TextScaled = true
+        lbl.Text = "[NTMT HUB] GUI loi:\n" .. tostring(guiErr)
+        lbl.Parent = sg
     end)
 end
 
