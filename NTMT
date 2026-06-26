@@ -164,70 +164,10 @@ local function getRoot(player)
 end
 
 ------------------------------------------------------------
--- BYPASS TWEEN (smooth TP - bypass anti-cheat)
+-- TELEPORT HELPER
 ------------------------------------------------------------
 
--- Global toggle - set true de TAT CA teleport bypass dung tween
-local useBypassTween = false
-local tweenSpeed = 350  -- studs/giay (cang cao cang nhanh, thap = an toan hon)
-
--- Bypass tween: di chuyen muot nguoi choi den vi tri dich bang TweenService
--- thay vi set CFrame truc tiep (server kho detect hon)
-local function bypassTween(targetCFrame, customSpeed)
-    local char = LocalPlayer.Character
-    if not char then return false end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    local hum = char:FindFirstChildOfClass("Humanoid")
-    if not (hrp and hum) then return false end
-
-    local speed = customSpeed or tweenSpeed
-    local distance = (hrp.Position - targetCFrame.Position).Magnitude
-    if distance < 1 then
-        hrp.CFrame = targetCFrame
-        return true
-    end
-    local duration = math.clamp(distance / speed, 0.05, 5)
-
-    -- Tat AutoRotate de tween khong bi xoay loan
-    local oldAutoRotate = hum.AutoRotate
-    hum.AutoRotate = false
-
-    -- Tat platform stand de khong bi gravity keo xuong
-    local oldPlatformStand = hum.PlatformStand
-    hum.PlatformStand = true
-
-    local tweenInfo = TweenInfo.new(
-        duration,
-        Enum.EasingStyle.Linear,
-        Enum.EasingDirection.Out
-    )
-    local tween = Services.TweenService:Create(hrp, tweenInfo, { CFrame = targetCFrame })
-    tween:Play()
-
-    -- Wait tween xong (toi da duration + 0.1s safety)
-    local done = false
-    tween.Completed:Connect(function() done = true end)
-    local deadline = os.clock() + duration + 0.1
-    while not done and os.clock() < deadline do
-        Services.RunService.Heartbeat:Wait()
-        -- Reset velocity de khong bi physics day
-        pcall(function() hrp.Velocity = Vector3.zero end)
-    end
-
-    -- Restore
-    hum.AutoRotate = oldAutoRotate
-    hum.PlatformStand = oldPlatformStand
-
-    -- Bao dam toi noi (tween co the bi off 1 chut)
-    pcall(function() hrp.CFrame = targetCFrame end)
-    return true
-end
-
--- Wrapper: dung bypass tween neu useBypassTween = true, else instant TP
-local function smartTeleport(targetCFrame, customSpeed)
-    if useBypassTween then
-        return bypassTween(targetCFrame, customSpeed)
-    end
+local function smartTeleport(targetCFrame)
     local hrp = getRoot(LocalPlayer)
     if hrp then
         pcall(function() hrp.CFrame = targetCFrame end)
@@ -235,7 +175,6 @@ local function smartTeleport(targetCFrame, customSpeed)
     end
     return false
 end
-
 
 local function getOwnedPlot()
     if not Gardens then return nil end
@@ -313,7 +252,7 @@ end
 -- 2. Verify ownership (plant phai trong plot cua minh)
 -- 3. Rate limit + random jitter (anti rate-limit detection)
 local lastHarvestFire = 0
-local harvestMinInterval = 0.03  -- 30ms toi thieu giua 2 lan fire (~33/s)
+local harvestMinInterval = 0.015  -- 15ms toi thieu giua 2 lan fire (~66/s)
 
 local function harvestPlant(plant)
     if not plant or not plant.Parent or not Networking then return false end
@@ -366,8 +305,9 @@ genv.ftgs_AutoSell        = false
 genv.ftgs_AutoSteal       = false
 genv.ftgs_AntiAFK         = false
 genv.ftgs_HarvestInfRange = false
-genv.ftgs_AutoBuySeed     = false
-genv.ftgs_AutoBuyGear     = false
+-- Auto Buy 24/7 ON theo default (user khong can click toggle)
+genv.ftgs_AutoBuySeed     = true
+genv.ftgs_AutoBuyGear     = true
 genv.ftgs_AutoCollect     = false
 genv.ftgs_AutoPlant       = false
 
@@ -375,75 +315,21 @@ local GAGTab = Window:Tab({ Title = "Grow a Garden 2", Icon = "sprout" })
 
 GAGTab:Section({ Title = "Auto Harvest" })
 
-local harvestInterval = 0.15
+local harvestInterval = 0.02
 
 GAGTab:Toggle({
     Title = "Auto Harvest",
-    Desc  = "Tự thu hoạch fruit chín",
+    Desc  = "Tu thu hoach fruit chin (0.02s/lan)",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoHarvest = state
         WindUI:Notify({
             Title = "Auto Harvest",
-            Content = state and "Đã bật" or "Đã tắt",
+            Content = state and "Da bat" or "Da tat",
             Icon = state and "play" or "pause",
             Duration = 2,
         })
     end
-})
-
-GAGTab:Slider({
-    Title = "Tốc độ Harvest (giây)",
-    Step  = 0.05,
-    Value = { Min = 0.05, Max = 2, Default = 0.15 },
-    Callback = function(v) harvestInterval = v end
-})
-
-GAGTab:Button({
-    Title = "Harvest 1 lần ngay",
-    Icon  = "zap",
-    Callback = function()
-        local total, ok = 0, 0
-        for _, plant in ipairs(getHarvestablePlants()) do
-            total = total + 1
-            if harvestPlant(plant) then ok = ok + 1 end
-        end
-        WindUI:Notify({
-            Title = "Manual Harvest",
-            Content = ("Đã harvest %d/%d fruit"):format(ok, total),
-            Icon = "circle-check",
-            Duration = 3,
-        })
-    end
-})
-
-------------------------------------------------------------
--- 6b) UI - BYPASS TWEEN (apply cho moi TP)
-------------------------------------------------------------
-
-GAGTab:Section({ Title = "Bypass Tween (TP) " })
-
-GAGTab:Toggle({
-    Title = "Bat Bypass Tween",
-    Desc  = "TP muot bang TweenService thay vi instant - kho bi anticheat detect",
-    Default = false,
-    Callback = function(v)
-        useBypassTween = v
-        WindUI:Notify({
-            Title = "Bypass Tween",
-            Content = v and "DA BAT" or "Da tat",
-            Icon = v and "play" or "pause",
-            Duration = 2,
-        })
-    end
-})
-
-GAGTab:Slider({
-    Title = "Toc do Tween (studs/giay)",
-    Step  = 10,
-    Value = { Min = 50, Max = 1000, Default = 350 },
-    Desc  = "Cang cao cang nhanh. ~200 = an toan, 350 = balanced, 1000 = nhanh",
-    Callback = function(v) tweenSpeed = v end
 })
 
 ------------------------------------------------------------
@@ -452,7 +338,7 @@ GAGTab:Slider({
 
 GAGTab:Section({ Title = "Auto Sell" })
 
-local sellInterval = 0.1
+local sellInterval = 2     -- fix 2s/lan sell
 local sellInfRange = false
 
 -- CONFIRMED logic GAG2: Networking.NPCS.SellAll:Fire()
@@ -527,7 +413,7 @@ end
 -- 2. Random jitter de fire khong dung pattern 0.1s/lan
 -- 3. Chi fire 1 remote duy nhat thay vi spam tat ca
 local lastSellFire = 0
-local sellMinInterval = 0.5  -- toi thieu 0.5s/lan sell (giong nguoi choi)
+local sellMinInterval = 1.5  -- toi thieu 1.5s/lan sell (loop fix 2s nen ok)
 
 local function fireSellRemotes()
     local now = os.clock()
@@ -578,31 +464,16 @@ end
 
 GAGTab:Toggle({
     Title = "Auto Sell",
+    Desc  = "Tu dong sell inventory moi 2 giay",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoSell = state
         WindUI:Notify({
             Title = "Auto Sell",
-            Content = state and "Đã bật" or "Đã tắt",
+            Content = state and "Da bat (2s/lan)" or "Da tat",
             Icon = state and "play" or "pause",
             Duration = 2,
         })
-    end
-})
-
-GAGTab:Slider({
-    Title = "Tốc độ Sell (giây)",
-    Step  = 0.05,
-    Value = { Min = 0.05, Max = 5, Default = 0.1 },
-    Callback = function(v) sellInterval = v end
-})
-
-GAGTab:Button({
-    Title = "Sell All ngay",
-    Icon  = "dollar-sign",
-    Callback = function()
-        sellInventory()
-        WindUI:Notify({ Title = "Sell All", Content = "Đã gửi lệnh bán", Icon = "circle-check", Duration = 2 })
     end
 })
 
@@ -1097,6 +968,10 @@ local function tryRawRemote(remote, ...)
     return false
 end
 
+-- Bo dem so seed/gear da mua (cho webhook)
+local BoughtSeeds = {}  -- {SeedName = count}
+local BoughtGears = {}  -- {GearName = count}
+
 local function purchaseSeed(seedName)
     local ok1 = false
     if SeedPurchaseFn then
@@ -1105,6 +980,9 @@ local function purchaseSeed(seedName)
     end
     if not ok1 and RawSeedRemote then
         ok1 = tryRawRemote(RawSeedRemote, seedName) and true or false
+    end
+    if ok1 then
+        BoughtSeeds[seedName] = (BoughtSeeds[seedName] or 0) + 1
     end
     return ok1
 end
@@ -1223,6 +1101,7 @@ local function buyGearSweep()
                     local added = after - before
                     gearInsufficientFundsFailures = 0
                     bought = bought + added
+                    BoughtGears[gearName] = (BoughtGears[gearName] or 0) + added
                     task.wait(Config.BuyGearDelay)
                 end
                 if stop then break end
@@ -1263,11 +1142,10 @@ for _, name in ipairs(GEARS_LIST) do Config.GearWhitelist[name] = true end
 
 GAGTab:Toggle({
     Title = "Auto Buy Seed",
-    Desc  = "BAT cai nay (khong phai 'Mua TAT CA')",
-    Default = false,
+    Desc  = "Tu dong mua het seed trong shop 24/7",
+    Default = true,
     Callback = function(s)
         genv.ftgs_AutoBuySeed = s
-        print("[NTMT HUB] AutoBuySeed =", s)
         WindUI:Notify({
             Title = "Auto Buy Seed",
             Content = s and "DA BAT" or "Da tat",
@@ -1278,50 +1156,11 @@ GAGTab:Toggle({
 })
 
 GAGTab:Toggle({
-    Title = "Mua TẤT CẢ Seed",
-    Desc  = "ON = tu dong select all seed vao whitelist (cung logic auto buy)",
-    Default = true,
-    Callback = function(v)
-        Config.BuySeedWhitelist = {}
-        if v then
-            for _, name in ipairs(SEEDS_LIST) do
-                Config.BuySeedWhitelist[name] = true
-            end
-        end
-        if Config.DebugBuy then
-            local n = 0
-            for _ in pairs(Config.BuySeedWhitelist) do n = n + 1 end
-            print(("[NTMT HUB] Mua TAT CA Seed =%s, whitelist=%d"):format(tostring(v), n))
-        end
-    end
-})
-
-pcall(function()
-    GAGTab:Dropdown({
-        Title = "Chọn Seed (khi 'Mua TẤT CẢ' = OFF)",
-        Values = SEEDS_LIST,
-        Value = nil,
-        Multi = true,
-        AllowNone = true,
-        Callback = function(sel)
-            Config.BuySeedWhitelist = {}
-            if type(sel) == "table" then
-                for k, v in pairs(sel) do
-                    if type(v) == "string" then Config.BuySeedWhitelist[v] = true
-                    elseif type(k) == "string" and v then Config.BuySeedWhitelist[k] = true end
-                end
-            end
-        end
-    })
-end)
-
-GAGTab:Toggle({
     Title = "Auto Buy Gear",
-    Desc  = "BAT cai nay (khong phai 'Mua TAT CA')",
-    Default = false,
+    Desc  = "Tu dong mua het gear trong shop 24/7",
+    Default = true,
     Callback = function(s)
         genv.ftgs_AutoBuyGear = s
-        print("[NTMT HUB] AutoBuyGear =", s)
         WindUI:Notify({
             Title = "Auto Buy Gear",
             Content = s and "DA BAT" or "Da tat",
@@ -1331,84 +1170,26 @@ GAGTab:Toggle({
     end
 })
 
-GAGTab:Toggle({
-    Title = "Mua TẤT CẢ Gear",
-    Desc  = "ON = tu dong select all gear vao whitelist (cung logic auto buy)",
-    Default = true,
-    Callback = function(v)
-        Config.GearWhitelist = {}
-        if v then
-            for _, name in ipairs(GEARS_LIST) do
-                Config.GearWhitelist[name] = true
-            end
-        end
-        if Config.DebugBuy then
-            local n = 0
-            for _ in pairs(Config.GearWhitelist) do n = n + 1 end
-            print(("[NTMT HUB] Mua TAT CA Gear =%s, whitelist=%d"):format(tostring(v), n))
-        end
-    end
-})
-
-pcall(function()
-    GAGTab:Dropdown({
-        Title = "Chọn Gear (khi 'Mua TẤT CẢ' = OFF)",
-        Values = GEARS_LIST,
-        Value = nil,
-        Multi = true,
-        AllowNone = true,
-        Callback = function(sel)
-            Config.GearWhitelist = {}
-            if type(sel) == "table" then
-                for k, v in pairs(sel) do
-                    if type(v) == "string" then Config.GearWhitelist[v] = true
-                    elseif type(k) == "string" and v then Config.GearWhitelist[k] = true end
-                end
-            end
-        end
-    })
-end)
-
-GAGTab:Button({
-    Title = "BAT TAT CA Auto Buy (test nhanh)",
-    Desc  = "Click de bat ca Auto Buy Seed + Auto Buy Gear + Debug Buy",
-    Icon  = "zap",
-    Callback = function()
-        genv.ftgs_AutoBuySeed = true
-        genv.ftgs_AutoBuyGear = true
-        Config.DebugBuy = true
-        print("[NTMT HUB] BAT TAT CA Auto Buy via button")
-        WindUI:Notify({
-            Title = "Auto Buy",
-            Content = "DA BAT TAT CA (Seed + Gear + Debug)",
-            Icon = "rocket",
-            Duration = 4,
-        })
-        -- Chay sweep ngay 1 lan
-        task.spawn(function() pcall(buySeedSweep) end)
-        task.spawn(function() pcall(buyGearSweep) end)
-    end
-})
-
-GAGTab:Toggle({
-    Title = "Debug Buy (in console)",
-    Desc  = "Bat de in log moi lan sweep chay - xem console F9",
-    Default = false,
-    Callback = function(v) Config.DebugBuy = v end
-})
-
 ------------------------------------------------------------
 -- 10) AUTO PLANT (auto detect remote)
 ------------------------------------------------------------
 
 GAGTab:Section({ Title = "Auto Plant" })
 
-local plantInterval = 0.5
-local plantMode     = "Below"
-local plantSpacing  = 6
+local plantInterval = 0.3
 local cachedPlantRemote = nil
 
--- Seed selection (cung logic voi Auto Buy)
+-- Wiki seed list: https://growagarden2.fandom.com/wiki/Seed_Shop
+local WIKI_SEED_LIST = {
+    "Carrot", "Strawberry", "Blueberry", "Tulip", "Tomato",
+    "Apple", "Bamboo", "Corn", "Cactus", "Pineapple",
+    "Mushroom", "Green Bean", "Banana", "Grape", "Coconut",
+    "Mango", "Dragon Fruit", "Acorn", "Cherry", "Sunflower",
+    "Venus Fly Trap", "Pomegranate", "Poison Apple", "Venom Spitter",
+    "Moon Bloom", "Dragon's Breath",
+}
+
+-- Seed selection
 local PlantWhitelist = {}  -- {SeedName = true, ...}
 local PlantAll = true       -- ON = plant all seeds co trong inventory
 
@@ -1525,31 +1306,21 @@ local function firePlant(position, seedName)
     return false
 end
 
--- Plant 1 chu ki: equip tool + fire plant theo plantMode
+-- Plant 1 chu ki: equip tool + fire plant tai vi tri dang dung
 local function plantOneSeed(tool)
     if not equipTool(tool) then return false end
     local hrp = getRoot(LocalPlayer)
     if not hrp then return false end
     local seedName = extractSeedName(tool.Name)
-    local center = hrp.Position
-    if plantMode == "Below" then
-        firePlant(center, seedName)
-    elseif plantMode == "Line" then
-        for i = -2, 2 do
-            firePlant(center + Vector3.new(i * plantSpacing, 0, 0), seedName)
-        end
-    elseif plantMode == "Circle" then
-        for i = 0, 5 do
-            local ang = (i / 6) * math.pi * 2
-            local off = Vector3.new(math.cos(ang), 0, math.sin(ang)) * plantSpacing
-            firePlant(center + off, seedName)
-        end
-    end
+    firePlant(hrp.Position, seedName)
     return true
 end
 
--- Lay danh sach seed list de hien dropdown (init tu inventory)
-local SEED_TOOL_LIST = getInventorySeedNames()
+-- Khop seed name (vd "Carrot") voi tool trong inventory (vd "Carrot Seed")
+local function isToolMatchSeed(toolName, seedName)
+    local tn = toolName:lower():gsub(" seed$", ""):gsub("seed$", ""):gsub("^%s+", ""):gsub("%s+$", "")
+    return tn == seedName:lower():gsub("^%s+", ""):gsub("%s+$", "")
+end
 
 GAGTab:Toggle({
     Title = "Auto Plant",
@@ -1590,7 +1361,7 @@ GAGTab:Toggle({
 pcall(function()
     GAGTab:Dropdown({
         Title = "Chon Seed de plant (khi 'Plant TAT CA' = OFF)",
-        Values = SEED_TOOL_LIST,
+        Values = WIKI_SEED_LIST,
         Value = nil,
         Multi = true,
         AllowNone = true,
@@ -1605,49 +1376,6 @@ pcall(function()
         end
     })
 end)
-
-GAGTab:Button({
-    Title = "Refresh seed list",
-    Icon  = "refresh-cw",
-    Desc  = "Lam moi danh sach seed neu vua moi nhan duoc seed",
-    Callback = function()
-        SEED_TOOL_LIST = getInventorySeedNames()
-        WindUI:Notify({
-            Title = "Refresh",
-            Content = ("Tim duoc %d loai seed trong inventory"):format(#SEED_TOOL_LIST),
-            Icon = "info",
-            Duration = 3,
-        })
-        print("[NTMT HUB] Inventory seeds:", table.concat(SEED_TOOL_LIST, ", "))
-    end
-})
-
-pcall(function()
-    GAGTab:Dropdown({
-        Title = "Che do Plant",
-        Values = { "Below", "Line", "Circle" },
-        Value = "Below",
-        Multi = false,
-        Callback = function(v)
-            if type(v) == "table" then v = v[1] or v[next(v)] end
-            plantMode = v or "Below"
-        end
-    })
-end)
-
-GAGTab:Slider({
-    Title = "Khoang cach giua cac plant (studs)",
-    Step  = 1,
-    Value = { Min = 3, Max = 20, Default = 6 },
-    Callback = function(v) plantSpacing = v end
-})
-
-GAGTab:Slider({
-    Title = "Toc do Plant (giay)",
-    Step  = 0.1,
-    Value = { Min = 0.2, Max = 3, Default = 0.5 },
-    Callback = function(v) plantInterval = v end
-})
 
 ------------------------------------------------------------
 -- 10b) ANTI STEAL (cầm shovel - hit player ăn cắp)
@@ -1955,6 +1683,374 @@ GAGTab:Toggle({
 })
 
 ------------------------------------------------------------
+-- 13b) WEBHOOK (Discord notification)
+------------------------------------------------------------
+
+local WebhookTab = Window:Tab({ Title = "Webhook", Icon = "bell" })
+WebhookTab:Section({ Title = "Discord Webhook" })
+
+local WEBHOOK_SAVE_PATH = "ntmthub_webhook.txt"
+local webhookUrl = ""
+local webhookEnabled = false
+local webhookInterval = 300  -- 5 phut
+
+-- Load webhook url da save
+if hasFs and isfile and isfile(WEBHOOK_SAVE_PATH) then
+    local ok, saved = pcall(readfile, WEBHOOK_SAVE_PATH)
+    if ok and saved and #saved > 0 then
+        webhookUrl = saved:gsub("^%s+", ""):gsub("%s+$", "")
+    end
+end
+
+-- POST tien ich (multi-executor)
+local function universalHttpPost(url, jsonBody)
+    local req = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+    if req then
+        local res = req({
+            Url = url,
+            Method = "POST",
+            Headers = { ["Content-Type"] = "application/json" },
+            Body = jsonBody,
+        })
+        return res and (res.StatusCode or res.Status or 0)
+    end
+    -- Fallback HttpService (chi work neu HttpService dat ban quyen)
+    local HS = game:GetService("HttpService")
+    local ok = pcall(function()
+        HS:PostAsync(url, jsonBody, Enum.HttpContentType.ApplicationJson)
+    end)
+    return ok and 200 or 0
+end
+
+-- JSON encode (HttpService)
+local HttpService = game:GetService("HttpService")
+local function jsonEncode(t)
+    local ok, s = pcall(function() return HttpService:JSONEncode(t) end)
+    return ok and s or "{}"
+end
+
+------------------------------------------------------------
+-- Weather detection
+------------------------------------------------------------
+
+local WEATHER_NAMES = {
+    "Rain", "Lightning", "Rainbow", "Snowfall", "Starfall", "Aurora Borealis",
+    "Blood Moon", "Midas Moon", "Rainbow Moon", "Blizzard", "Aurora",
+}
+
+local function findActiveWeather()
+    -- Check 1: ReplicatedStorage.Weather/ActiveWeather (StringValue)
+    local RS = Services.ReplicatedStorage
+    for _, name in ipairs({ "ActiveWeather", "Weather", "CurrentWeather", "WeatherType", "WeatherEvent" }) do
+        local obj = RS:FindFirstChild(name)
+        if obj then
+            if obj:IsA("StringValue") and obj.Value and #obj.Value > 0 then return obj.Value end
+            if obj:IsA("Folder") or obj:IsA("Configuration") then
+                for _, c in ipairs(obj:GetChildren()) do
+                    if (c:IsA("BoolValue") and c.Value) or (c:IsA("StringValue") and #c.Value > 0) then
+                        return c.Name
+                    end
+                end
+            end
+        end
+    end
+    -- Check 2: Workspace.WeatherEvents/Effects con
+    local WS = Services.Workspace
+    for _, name in ipairs({ "WeatherEvents", "Weather", "ActiveWeather", "WeatherEffects" }) do
+        local obj = WS:FindFirstChild(name)
+        if obj then
+            for _, c in ipairs(obj:GetChildren()) do
+                for _, wn in ipairs(WEATHER_NAMES) do
+                    if c.Name:lower():find(wn:lower(), 1, true) then return wn end
+                end
+            end
+        end
+    end
+    -- Check 3: Night
+    local night = RS:FindFirstChild("Night")
+    if night and night.Value then return "Night" end
+    return "Day"
+end
+
+-- Lay end time (epoch hoac so giay con lai)
+local function findWeatherEndTime()
+    local RS = Services.ReplicatedStorage
+    for _, name in ipairs({ "WeatherEndTime", "WeatherEnd", "EndTime", "WeatherUnixEnd" }) do
+        local v = RS:FindFirstChild(name)
+        if v and v.Value then
+            local n = tonumber(v.Value)
+            if n then
+                if n > os.time() then
+                    -- epoch
+                    return os.date("%H:%M:%S", n)
+                else
+                    -- so giay con lai
+                    return ("~%ds"):format(math.floor(n))
+                end
+            end
+        end
+    end
+    return "N/A"
+end
+
+------------------------------------------------------------
+-- Inventory snapshot
+------------------------------------------------------------
+
+local function getInventorySnapshot()
+    local items = {}
+    local total = 0
+    for _, container in ipairs({ LocalPlayer.Character, LocalPlayer:FindFirstChildOfClass("Backpack") }) do
+        if container then
+            for _, tool in ipairs(container:GetChildren()) do
+                if tool:IsA("Tool") then
+                    local count = tonumber(tool:GetAttribute("Count")) or 1
+                    items[tool.Name] = (items[tool.Name] or 0) + count
+                    total = total + count
+                end
+            end
+        end
+    end
+    return items, total
+end
+
+------------------------------------------------------------
+-- Build embed
+------------------------------------------------------------
+
+local function buildEmbed()
+    local accountName = LocalPlayer.DisplayName ~= LocalPlayer.Name
+        and ("%s (@%s)"):format(LocalPlayer.DisplayName, LocalPlayer.Name)
+        or LocalPlayer.Name
+
+    local weather = findActiveWeather()
+    local weatherEnd = findWeatherEndTime()
+
+    -- Seeds bought
+    local seedLines = {}
+    for name, amt in pairs(BoughtSeeds) do
+        if amt > 0 then table.insert(seedLines, ("• %s x%d"):format(name, amt)) end
+    end
+    if #seedLines == 0 then table.insert(seedLines, "_(chua mua seed nao)_") end
+
+    -- Gears bought
+    local gearLines = {}
+    for name, amt in pairs(BoughtGears) do
+        if amt > 0 then table.insert(gearLines, ("• %s x%d"):format(name, amt)) end
+    end
+    if #gearLines == 0 then table.insert(gearLines, "_(chua mua gear nao)_") end
+
+    -- Inventory snapshot
+    local invItems, invTotal = getInventorySnapshot()
+    local invLines = {}
+    local invSorted = {}
+    for k, v in pairs(invItems) do table.insert(invSorted, { name = k, count = v }) end
+    table.sort(invSorted, function(a, b) return a.count > b.count end)
+    for i, it in ipairs(invSorted) do
+        if i > 25 then break end
+        table.insert(invLines, ("• %s x%d"):format(it.name, it.count))
+    end
+    if #invLines == 0 then table.insert(invLines, "_(empty)_") end
+
+    local sheckles = getSheckles()
+
+    local desc = table.concat({
+        ("** [ %s ] **"):format(accountName),
+        "",
+        "** weather **",
+        weather,
+        ("end: %s"):format(tostring(weatherEnd)),
+        "",
+        "** seed and gear **",
+        table.concat(seedLines, "\n"),
+        table.concat(gearLines, "\n"),
+        "",
+        "** inventory **",
+        table.concat(invLines, "\n"),
+        "",
+        ("** sheckles amount: %s **"):format(tostring(sheckles)),
+    }, "\n")
+
+    return {
+        username = "NTMT HUB",
+        embeds = {
+            {
+                title = "NTMT HUB | Grow a Garden 2",
+                description = desc,
+                color = 5763719,
+                footer = { text = ("Total inv: %d items"):format(invTotal) },
+                timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+            },
+        },
+    }
+end
+
+local function sendWebhook(reason)
+    if not webhookUrl or webhookUrl == "" or not webhookUrl:lower():find("discord") then
+        WindUI:Notify({ Title = "Webhook", Content = "URL webhook khong hop le", Icon = "circle-x", Duration = 3 })
+        return false
+    end
+    local body = jsonEncode(buildEmbed())
+    local status = universalHttpPost(webhookUrl, body)
+    if status >= 200 and status < 300 then
+        if reason then print(("[NTMT HUB] Webhook sent (%s) status=%s"):format(reason, tostring(status))) end
+        return true
+    else
+        warn(("[NTMT HUB] Webhook FAILED status=%s"):format(tostring(status)))
+        return false
+    end
+end
+
+pcall(function()
+    WebhookTab:Input({
+        Title = "Webhook URL",
+        Desc  = "Paste Discord webhook URL vao day. Tu dong save de lan sau khong can paste lai.",
+        Value = webhookUrl,
+        InputIcon = "link",
+        Placeholder = "https://discord.com/api/webhooks/...",
+        Callback = function(v)
+            webhookUrl = tostring(v or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            if hasFs and writefile then
+                pcall(writefile, WEBHOOK_SAVE_PATH, webhookUrl)
+            end
+        end,
+    })
+end)
+
+WebhookTab:Toggle({
+    Title = "Auto Notification",
+    Desc  = ("Gui webhook moi %ds (mac dinh 5 phut)"):format(webhookInterval),
+    Default = false,
+    Callback = function(v)
+        webhookEnabled = v
+        if v and (webhookUrl == "" or not webhookUrl:lower():find("discord")) then
+            WindUI:Notify({ Title = "Webhook", Content = "Hay nhap URL webhook truoc!", Icon = "circle-x", Duration = 4 })
+        end
+        WindUI:Notify({
+            Title = "Auto Notification",
+            Content = v and "DA BAT" or "Da tat",
+            Icon = v and "bell" or "bell-off",
+            Duration = 2,
+        })
+    end
+})
+
+WebhookTab:Slider({
+    Title = "Chu ky gui (giay)",
+    Step  = 30,
+    Value = { Min = 60, Max = 1800, Default = 300 },
+    Callback = function(v) webhookInterval = v end
+})
+
+WebhookTab:Button({
+    Title = "Test gui webhook ngay",
+    Icon  = "send",
+    Callback = function()
+        if sendWebhook("manual") then
+            WindUI:Notify({ Title = "Webhook", Content = "Gui thanh cong!", Icon = "check", Duration = 3 })
+        else
+            WindUI:Notify({ Title = "Webhook", Content = "Gui that bai - check URL & executor co HTTP POST", Icon = "circle-x", Duration = 4 })
+        end
+    end
+})
+
+WebhookTab:Button({
+    Title = "Reset bo dem mua seed/gear",
+    Icon  = "trash-2",
+    Callback = function()
+        BoughtSeeds = {}
+        BoughtGears = {}
+        WindUI:Notify({ Title = "Reset", Content = "Bo dem mua = 0", Icon = "circle-check", Duration = 2 })
+    end
+})
+
+-- Auto webhook loop
+task.spawn(function()
+    while true do
+        task.wait(webhookInterval)
+        if webhookEnabled and webhookUrl and webhookUrl ~= "" then
+            pcall(sendWebhook, "auto")
+        end
+    end
+end)
+
+------------------------------------------------------------
+-- 13c) JOIN SERVER (JobId)
+------------------------------------------------------------
+
+local ServerTab = Window:Tab({ Title = "Server Hop", Icon = "server" })
+ServerTab:Section({ Title = "Join Server theo JobId" })
+
+local pendingJobId = ""
+
+pcall(function()
+    ServerTab:Input({
+        Title = "JobId",
+        Desc  = "Nhap JobId server muon join (vd: 442d0a7c-9ace-408c-9a4b-6979a1308ad7)",
+        Value = "",
+        InputIcon = "hash",
+        Placeholder = "xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx",
+        Callback = function(v)
+            pendingJobId = tostring(v or ""):gsub("^%s+", ""):gsub("%s+$", "")
+        end,
+    })
+end)
+
+ServerTab:Button({
+    Title = "JOIN server",
+    Icon  = "log-in",
+    Desc  = "TP toi server co JobId vua nhap o tren",
+    Callback = function()
+        if pendingJobId == "" or #pendingJobId < 10 then
+            WindUI:Notify({ Title = "Lỗi", Content = "JobId trong hoac qua ngan", Icon = "circle-x", Duration = 3 })
+            return
+        end
+        WindUI:Notify({ Title = "Server Hop", Content = "Dang TP toi " .. pendingJobId:sub(1, 8) .. "...", Icon = "send", Duration = 3 })
+
+        local TS = game:GetService("TeleportService")
+        -- queue teleport de chac chan sau rejoin (neu executor support)
+        local payload = string.format(
+            'game:GetService("TeleportService"):TeleportToPlaceInstance(%d, %q, game:GetService("Players").LocalPlayer)',
+            game.PlaceId, pendingJobId
+        )
+        if queue_on_teleport then pcall(queue_on_teleport, payload)
+        elseif queueteleport then pcall(queueteleport, payload)
+        elseif syn and syn.queue_on_teleport then pcall(syn.queue_on_teleport, payload)
+        end
+
+        local ok, err = pcall(function()
+            TS:TeleportToPlaceInstance(game.PlaceId, pendingJobId, LocalPlayer)
+        end)
+        if not ok then
+            WindUI:Notify({ Title = "Server Hop", Content = "Teleport that bai: " .. tostring(err), Icon = "circle-x", Duration = 5 })
+        end
+    end
+})
+
+ServerTab:Button({
+    Title = "Re-join server hien tai",
+    Icon  = "refresh-cw",
+    Callback = function()
+        local TS = game:GetService("TeleportService")
+        pcall(function()
+            TS:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
+        end)
+    end
+})
+
+ServerTab:Button({
+    Title = "Copy JobId hien tai",
+    Icon  = "copy",
+    Callback = function()
+        local jobId = tostring(game.JobId or "")
+        local clip = setclipboard or (Clipboard and Clipboard.set) or toclipboard
+        if clip then pcall(clip, jobId) end
+        WindUI:Notify({ Title = "JobId", Content = jobId, Icon = "copy", Duration = 5 })
+        print("[NTMT HUB] Current JobId:", jobId)
+    end
+})
+
+------------------------------------------------------------
 -- 14) MAIN LOOPS
 ------------------------------------------------------------
 
@@ -2020,15 +2116,20 @@ task.spawn(function()
         task.wait(plantInterval)
         if genv.ftgs_AutoPlant then
             pcall(function()
+                local invTools = getInventorySeedTools()
                 local tools = {}
                 if PlantAll then
-                    -- Plant TAT CA seed trong inventory
-                    tools = getInventorySeedTools()
+                    tools = invTools
                 else
-                    -- Chi plant seed co trong dropdown
-                    for _, t in ipairs(getInventorySeedTools()) do
-                        if PlantWhitelist[t.Name] then
-                            table.insert(tools, t)
+                    -- Match wiki seed name -> tool trong inventory
+                    for seedName, enabled in pairs(PlantWhitelist) do
+                        if enabled then
+                            for _, t in ipairs(invTools) do
+                                if isToolMatchSeed(t.Name, seedName) then
+                                    table.insert(tools, t)
+                                    break
+                                end
+                            end
                         end
                     end
                 end
