@@ -1,20 +1,20 @@
--- NTMT HUB | Grow a Garden 2
+-- NTMT HUB Grow a Garden 2
 local __NTMT_OK, __NTMT_ERR = pcall(function()
 
-local function getGlobal(name)
-    local v = rawget(_G, name)
+local function getGlobal(n)
+    local v = rawget(_G, n)
     if v ~= nil then return v end
     if type(getgenv) == "function" then
-        local ok, env = pcall(getgenv)
-        if ok and type(env) == "table" then
-            v = rawget(env, name)
+        local ok, e = pcall(getgenv)
+        if ok and type(e) == "table" then
+            v = rawget(e, n)
             if v ~= nil then return v end
         end
     end
     if type(getrenv) == "function" then
-        local ok, env = pcall(getrenv)
-        if ok and type(env) == "table" then
-            v = rawget(env, name)
+        local ok, e = pcall(getrenv)
+        if ok and type(e) == "table" then
+            v = rawget(e, n)
             if v ~= nil then return v end
         end
     end
@@ -24,11 +24,11 @@ end
 local LOAD = getGlobal("loadstring") or getGlobal("load")
 local Executor = "Unknown"
 if type(getGlobal("identifyexecutor")) == "function" then
-    local ok, name = pcall(getGlobal("identifyexecutor"))
-    if ok and name then Executor = tostring(name) end
+    local ok, n = pcall(getGlobal("identifyexecutor"))
+    if ok and n then Executor = tostring(n) end
 elseif type(getGlobal("getexecutorname")) == "function" then
-    local ok, name = pcall(getGlobal("getexecutorname"))
-    if ok and name then Executor = tostring(name) end
+    local ok, n = pcall(getGlobal("getexecutorname"))
+    if ok and n then Executor = tostring(n) end
 end
 
 local cloneref = getGlobal("cloneref") or getGlobal("clonereference") or function(o) return o end
@@ -44,46 +44,23 @@ local function hexColor(hex)
     end
     hex = tostring(hex or ""):gsub("#", "")
     if #hex < 6 then return Color3.new(1, 1, 1) end
-    return Color3.new(
-        tonumber(hex:sub(1, 2), 16) / 255,
-        tonumber(hex:sub(3, 4), 16) / 255,
-        tonumber(hex:sub(5, 6), 16) / 255
-    )
+    return Color3.new(tonumber(hex:sub(1,2),16)/255, tonumber(hex:sub(3,4),16)/255, tonumber(hex:sub(5,6),16)/255)
 end
 
 local function universalHttpGet(url)
-    local function good(body)
-        return type(body) == "string" and #body > 100 and not body:find("404: Not Found", 1, true)
+    local function okBody(b)
+        return type(b) == "string" and #b > 100 and not b:find("404", 1, true)
     end
-    local ok, body = pcall(function() return game:HttpGet(url, true) end)
-    if ok and good(body) then return body end
-    ok, body = pcall(function() return game:HttpGet(url) end)
-    if ok and good(body) then return body end
-    local hg = getGlobal("httpget") or getGlobal("HttpGet")
-    if type(hg) == "function" then
-        ok, body = pcall(hg, url)
-        if ok and good(body) then return body end
-    end
+    local ok, body = pcall(function() return game:HttpGet(url) end)
+    if ok and okBody(body) then return body end
     local req = getGlobal("request") or getGlobal("http_request")
-        or (type(syn) == "table" and syn.request)
-        or (type(http) == "table" and http.request)
-        or (type(fluxus) == "table" and fluxus.request)
+        or (type(syn) == "table" and syn.request) or (type(http) == "table" and http.request)
     if req then
         ok, body = pcall(req, { Url = url, Method = "GET" })
         if ok and type(body) == "table" then body = body.Body or body.body end
-        if good(body) then return body end
+        if okBody(body) then return body end
     end
     return nil
-end
-
-local function runLuaSource(source, label)
-    if type(LOAD) ~= "function" then return nil, "no loadstring" end
-    if type(source) ~= "string" or #source < 100 then return nil, "bad source" end
-    local fn, compileErr = LOAD(source, label or "@ntmt")
-    if not fn then return nil, compileErr end
-    local ok, result = pcall(fn)
-    if not ok then return nil, result end
-    return result
 end
 
 local function buildFallbackWindUI()
@@ -100,29 +77,30 @@ local function buildFallbackWindUI()
     end
     function API.CreateWindow(_, cfg)
         cfg = cfg or {}
-        local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui", 15)
+        local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui", 20)
         local sg = Instance.new("ScreenGui")
         sg.Name = "NTMTHubUI"
         sg.ResetOnSpawn = false
+        sg.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
         sg.Parent = pg
         local open = Instance.new("TextButton")
-        open.Size = UDim2.fromOffset(150, 46)
-        open.Position = UDim2.new(0, 10, 0.5, -23)
-        open.BackgroundColor3 = Color3.fromRGB(48, 200, 80)
+        open.Size = UDim2.fromOffset(160, 48)
+        open.Position = UDim2.new(0, 8, 0.5, -24)
+        open.BackgroundColor3 = Color3.fromRGB(46, 200, 80)
         open.TextColor3 = Color3.new(1, 1, 1)
         open.Font = Enum.Font.GothamBold
-        open.TextSize = 14
+        open.TextSize = 15
         open.Text = (cfg.OpenButton and cfg.OpenButton.Title) or "Open NTMT HUB"
         open.Parent = sg
         local panel = Instance.new("Frame")
-        panel.Size = UDim2.fromOffset(430, 540)
-        panel.Position = UDim2.new(0.5, -215, 0.5, -270)
-        panel.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+        panel.Size = UDim2.fromOffset(440, 560)
+        panel.Position = UDim2.new(0.5, -220, 0.5, -280)
+        panel.BackgroundColor3 = Color3.fromRGB(20, 20, 26)
         panel.Visible = false
         panel.Parent = sg
         local scroll = Instance.new("ScrollingFrame")
-        scroll.Size = UDim2.new(1, -6, 1, -6)
-        scroll.Position = UDim2.new(0, 3, 0, 3)
+        scroll.Size = UDim2.new(1, -8, 1, -8)
+        scroll.Position = UDim2.new(0, 4, 0, 4)
         scroll.BackgroundTransparency = 1
         scroll.ScrollBarThickness = 6
         scroll.CanvasSize = UDim2.new()
@@ -131,7 +109,7 @@ local function buildFallbackWindUI()
         layout.Padding = UDim.new(0, 4)
         layout.Parent = scroll
         layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
-            scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 10)
+            scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 12)
         end)
         open.MouseButton1Click:Connect(function() panel.Visible = not panel.Visible end)
         local win = {}
@@ -143,21 +121,21 @@ local function buildFallbackWindUI()
                 Update = function(_, u) if u and u.Title and obj then obj.Text = u.Title end end,
             }
         end
-        function win.Tab(_, tabCfg)
+        function win.Tab(_, tc)
             local tab = {}
             local hdr = Instance.new("TextLabel")
-            hdr.Size = UDim2.new(1, -8, 0, 26)
+            hdr.Size = UDim2.new(1, -8, 0, 28)
             hdr.BackgroundTransparency = 1
-            hdr.TextColor3 = Color3.fromRGB(120, 220, 140)
+            hdr.TextColor3 = Color3.fromRGB(110, 220, 130)
             hdr.Font = Enum.Font.GothamBold
             hdr.TextSize = 15
-            hdr.Text = "-- " .. (tabCfg.Title or "Tab") .. " --"
+            hdr.Text = "-- " .. (tc.Title or "Tab") .. " --"
             hdr.Parent = scroll
             function tab.Section(_, s)
                 local l = Instance.new("TextLabel")
-                l.Size = UDim2.new(1, -8, 0, 20)
+                l.Size = UDim2.new(1, -8, 0, 22)
                 l.BackgroundTransparency = 1
-                l.TextColor3 = Color3.fromRGB(170, 170, 170)
+                l.TextColor3 = Color3.fromRGB(160, 160, 160)
                 l.Text = s.Title or ""
                 l.Parent = scroll
                 return bindEl(l)
@@ -165,13 +143,13 @@ local function buildFallbackWindUI()
             function tab.Toggle(_, o)
                 local on = o.Default == true
                 local b = Instance.new("TextButton")
-                b.Size = UDim2.new(1, -8, 0, 30)
+                b.Size = UDim2.new(1, -8, 0, 32)
                 b.Font = Enum.Font.Gotham
                 b.TextSize = 13
                 b.Parent = scroll
                 local function paint()
                     b.Text = (o.Title or "Toggle") .. (on and " [ON]" or " [OFF]")
-                    b.BackgroundColor3 = on and Color3.fromRGB(34, 120, 62) or Color3.fromRGB(55, 55, 62)
+                    b.BackgroundColor3 = on and Color3.fromRGB(30, 110, 58) or Color3.fromRGB(50, 50, 58)
                     b.TextColor3 = Color3.new(1, 1, 1)
                 end
                 paint()
@@ -181,14 +159,14 @@ local function buildFallbackWindUI()
                     if o.Callback then pcall(o.Callback, on) end
                 end)
                 local el = bindEl(b)
-                function el.SetTitle(_, t) o.Title = t paint() end
+                function el.SetTitle(_, t) o.Title = t; paint() end
                 return el
             end
             function tab.Button(_, o)
                 local b = Instance.new("TextButton")
-                b.Size = UDim2.new(1, -8, 0, 30)
+                b.Size = UDim2.new(1, -8, 0, 32)
                 b.Text = o.Title or "Button"
-                b.BackgroundColor3 = Color3.fromRGB(70, 70, 90)
+                b.BackgroundColor3 = Color3.fromRGB(65, 65, 85)
                 b.TextColor3 = Color3.new(1, 1, 1)
                 b.Parent = scroll
                 b.MouseButton1Click:Connect(function() if o.Callback then pcall(o.Callback) end end)
@@ -197,8 +175,8 @@ local function buildFallbackWindUI()
             function tab.Slider(_, o)
                 local val = (o.Value and o.Value.Default) or 16
                 local l = Instance.new("TextLabel")
-                l.Size = UDim2.new(1, -8, 0, 30)
-                l.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+                l.Size = UDim2.new(1, -8, 0, 32)
+                l.BackgroundColor3 = Color3.fromRGB(42, 42, 52)
                 l.TextColor3 = Color3.new(1, 1, 1)
                 l.Parent = scroll
                 local function upd()
@@ -217,8 +195,8 @@ local function buildFallbackWindUI()
             end
             function tab.Input(_, o)
                 local box = Instance.new("TextBox")
-                box.Size = UDim2.new(1, -8, 0, 30)
-                box.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+                box.Size = UDim2.new(1, -8, 0, 32)
+                box.BackgroundColor3 = Color3.fromRGB(38, 38, 46)
                 box.TextColor3 = Color3.new(1, 1, 1)
                 box.Text = o.Value or ""
                 box.PlaceholderText = o.Placeholder or ""
@@ -230,12 +208,12 @@ local function buildFallbackWindUI()
             end
             function tab.Paragraph(_, o)
                 local l = Instance.new("TextLabel")
-                l.Size = UDim2.new(1, -8, 0, 50)
+                l.Size = UDim2.new(1, -8, 0, 52)
                 l.TextWrapped = true
                 l.TextXAlignment = Enum.TextXAlignment.Left
                 l.TextYAlignment = Enum.TextYAlignment.Top
                 l.BackgroundTransparency = 1
-                l.TextColor3 = Color3.new(0.9, 0.9, 0.9)
+                l.TextColor3 = Color3.new(0.92, 0.92, 0.92)
                 l.Text = (o.Title or "") .. "\n" .. (o.Desc or "")
                 l.Parent = scroll
                 local el = bindEl(l)
@@ -243,11 +221,10 @@ local function buildFallbackWindUI()
                 return el
             end
             function tab.Dropdown(_, o)
-                local idx = 1
-                local vals = o.Values or {}
+                local idx, vals = 1, o.Values or {}
                 local b = Instance.new("TextButton")
-                b.Size = UDim2.new(1, -8, 0, 30)
-                b.BackgroundColor3 = Color3.fromRGB(55, 55, 70)
+                b.Size = UDim2.new(1, -8, 0, 32)
+                b.BackgroundColor3 = Color3.fromRGB(52, 52, 68)
                 b.TextColor3 = Color3.new(1, 1, 1)
                 b.Parent = scroll
                 local function paint()
@@ -274,50 +251,50 @@ local function buildFallbackWindUI()
     return API
 end
 
-print("[NTMT HUB] Starting... | Executor:", Executor)
+warn("[NTMT HUB] Starting | Executor: " .. Executor)
 
-local hasFs = (getGlobal("writefile") and getGlobal("readfile") and getGlobal("isfile")) ~= nil
 local genv = _G
 if type(getgenv) == "function" then
-    local ok, env = pcall(getgenv)
-    if ok and type(env) == "table" then genv = env end
+    local ok, e = pcall(getgenv)
+    if ok and type(e) == "table" then genv = e end
 end
 
+local hasFs = (getGlobal("writefile") and getGlobal("readfile") and getGlobal("isfile")) ~= nil
+
 ------------------------------------------------------------
--- 2) LOAD WINDUI
+-- 2) LOAD WINDUI (fallback first = always works)
 ------------------------------------------------------------
 
-local WindUI
-do
-    local function pickWindUI(lib)
-        if lib and type(lib.CreateWindow) == "function" then return lib end
-        if _G.WindUI and type(_G.WindUI.CreateWindow) == "function" then return _G.WindUI end
-        if genv.WindUI and type(genv.WindUI.CreateWindow) == "function" then return genv.WindUI end
-        return nil
-    end
+local WindUI = nil
+if type(LOAD) == "function" then
     local urls = {
         "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua",
         "https://raw.githubusercontent.com/Footagesus/WindUI/refs/heads/main/dist/main.lua",
     }
     for _, url in ipairs(urls) do
-        local source = universalHttpGet(url)
-        if source then
-            local lib, err = runLuaSource(source, "@WindUI")
-            WindUI = pickWindUI(lib)
-            if WindUI then break end
-            warn("[WindUI] fail:", err)
-        else
-            warn("[WindUI] HTTP fail:", url)
+        local src = universalHttpGet(url)
+        if src then
+            local fn, err = LOAD(src, "@WindUI")
+            if fn then
+                local ok, lib = pcall(fn)
+                if ok and lib and type(lib.CreateWindow) == "function" then
+                    WindUI = lib
+                    break
+                end
+            end
         end
     end
-    if not WindUI then
-        warn("[NTMT HUB] WindUI khong load duoc -> UI fallback")
-        WindUI = buildFallbackWindUI()
-    end
-    genv.WindUI = WindUI
-    _G.WindUI = WindUI
-    print("[NTMT HUB] WindUI ready v" .. tostring(WindUI.Version or "?"))
 end
+if not WindUI and _G.WindUI and type(_G.WindUI.CreateWindow) == "function" then WindUI = _G.WindUI end
+if not WindUI and genv.WindUI and type(genv.WindUI.CreateWindow) == "function" then WindUI = genv.WindUI end
+if not WindUI then
+    WindUI = buildFallbackWindUI()
+    warn("[NTMT HUB] Dung UI fallback - bam nut xanh Open NTMT HUB")
+else
+    warn("[NTMT HUB] WindUI OK v" .. tostring(WindUI.Version or "?"))
+end
+genv.WindUI = WindUI
+_G.WindUI = WindUI
 
 ------------------------------------------------------------
 -- 3) SERVICES & GAME MODULES
@@ -2256,10 +2233,12 @@ else
     if okWin and winOrErr then
         Window = winOrErr
     else
-        error(tostring(winOrErr))
+        warn("[NTMT HUB] CreateWindow failed:", winOrErr)
+        Window = WindUI:CreateWindow({ Title = "NTMT HUB", Folder = "ntmthub", Icon = "home" })
     end
 end
 
+if Window then
 Window:Tag({ Title = "v" .. (WindUI.Version or "?"), Icon = "github", Color = hexColor("#1c1c1c"), Border = true })
 Window:Tag({ Title = Executor, Icon = "cpu", Color = hexColor("#257AF7"), Border = true })
 Window:Tag({
@@ -2730,6 +2709,8 @@ makeButton(SettingsTab, "translate", "languages", function()
     notify(tr("translate"), currentLang, "check", 2)
 end)
 
+end -- if Window
+
 end) -- guiOk pcall
 
 if not guiOk then
@@ -2997,14 +2978,14 @@ end)
 
 print(("[NTMT HUB] Loaded on executor: %s"):format(Executor))
 
-end) -- __NTMT pcall
+end)
 
 if not __NTMT_OK then
     warn("[NTMT HUB] LOI:", __NTMT_ERR)
     pcall(function()
         game:GetService("StarterGui"):SetCore("SendNotification", {
             Title = "NTMT HUB LOI",
-            Text = tostring(__NTMT_ERR):sub(1, 200),
+            Text = tostring(__NTMT_ERR):sub(1, 220),
             Duration = 15,
         })
     end)
