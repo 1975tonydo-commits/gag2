@@ -788,8 +788,6 @@ GAGTab:Toggle({
 local Config = {
     BuySeedWhitelist = {},
     GearWhitelist    = {},
-    BuyAllSeeds = true,   -- ON = mua tat ca seed (giong chon het trong dropdown)
-    BuyAllGears = true,   -- ON = mua tat ca gear (giong chon het trong dropdown)
     MaxBuySeedsPerSweep = 200,
     MaxBuyGearsPerSweep = 50,
     BuySeedDelay = 0.05,
@@ -956,8 +954,7 @@ local function getWantedGearNames()
     if not items then return names end
     for _, value in ipairs(items:GetChildren()) do
         if value:IsA("ValueBase") and tonumber(value.Value) and value.Value > 0 then
-            -- Mua TAT CA ON => lay het | OFF => chi lay gear co trong dropdown
-            if Config.BuyAllGears or whitelistAllows(Config.GearWhitelist, value.Name) then
+            if whitelistAllows(Config.GearWhitelist, value.Name) then
                 table.insert(names, value.Name)
             end
         end
@@ -1131,20 +1128,21 @@ local function buySeedSweep()
         return 0
     end
     local seeds = {}
-    -- Mua TAT CA ON => lay het stock seeds (da loai gold/rainbow/horned-melon/mega/poison-ivy)
-    -- Mua TAT CA OFF => chi lay seeds co trong dropdown
+    -- Chung 1 logic: chi mua seed co trong whitelist
+    -- (Mua TAT CA toggle se auto-populate whitelist voi tat ca seeds)
     for _, seed in ipairs(getStockSeeds()) do
-        if Config.BuyAllSeeds or whitelistAllows(Config.BuySeedWhitelist, seed) then
+        if whitelistAllows(Config.BuySeedWhitelist, seed) then
             table.insert(seeds, seed)
         end
     end
     if Config.DebugBuy then
-        print(("[NTMT HUB] buySeedSweep: %d seeds (BuyAll=%s, sheckles=%d)"):format(
-            #seeds, tostring(Config.BuyAllSeeds), getSheckles()))
+        local wlCount = 0
+        for _ in pairs(Config.BuySeedWhitelist) do wlCount = wlCount + 1 end
+        print(("[NTMT HUB] buySeedSweep: %d seeds matched (whitelist=%d, sheckles=%d)"):format(
+            #seeds, wlCount, getSheckles()))
         if #seeds == 0 then
             local stockAll = getStockSeeds()
-            warn(("[NTMT HUB]   STOCK has %d seeds but matched 0! (BuyAll=%s)"):format(
-                #stockAll, tostring(Config.BuyAllSeeds)))
+            warn(("[NTMT HUB]   STOCK has %d seeds but whitelist matched 0!"):format(#stockAll))
         end
     end
     for _, seed in ipairs(seeds) do
@@ -1258,6 +1256,11 @@ local GEARS_LIST = listStockNames(getGearShopFolder() and getGearShopFolder():Fi
 
 GAGTab:Section({ Title = "Auto Buy Seed & Gear" })
 
+-- Init whitelist with ALL items (vi Default = true cho Mua TAT CA)
+for _, name in ipairs(SEEDS_LIST) do Config.BuySeedWhitelist[name] = true end
+for _, name in ipairs(GEARS_LIST) do Config.GearWhitelist[name] = true end
+
+
 GAGTab:Toggle({
     Title = "Auto Buy Seed",
     Desc  = "BAT cai nay (khong phai 'Mua TAT CA')",
@@ -1276,11 +1279,20 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Mua TẤT CẢ Seed",
-    Desc  = "ON = mua het seed trong shop (giong chon all trong dropdown)",
+    Desc  = "ON = tu dong select all seed vao whitelist (cung logic auto buy)",
     Default = true,
     Callback = function(v)
-        Config.BuyAllSeeds = v
-        if Config.DebugBuy then print("[NTMT HUB] BuyAllSeeds =", v) end
+        Config.BuySeedWhitelist = {}
+        if v then
+            for _, name in ipairs(SEEDS_LIST) do
+                Config.BuySeedWhitelist[name] = true
+            end
+        end
+        if Config.DebugBuy then
+            local n = 0
+            for _ in pairs(Config.BuySeedWhitelist) do n = n + 1 end
+            print(("[NTMT HUB] Mua TAT CA Seed =%s, whitelist=%d"):format(tostring(v), n))
+        end
     end
 })
 
@@ -1321,11 +1333,20 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Mua TẤT CẢ Gear",
-    Desc  = "ON = mua het gear trong shop (giong chon all trong dropdown)",
+    Desc  = "ON = tu dong select all gear vao whitelist (cung logic auto buy)",
     Default = true,
     Callback = function(v)
-        Config.BuyAllGears = v
-        if Config.DebugBuy then print("[NTMT HUB] BuyAllGears =", v) end
+        Config.GearWhitelist = {}
+        if v then
+            for _, name in ipairs(GEARS_LIST) do
+                Config.GearWhitelist[name] = true
+            end
+        end
+        if Config.DebugBuy then
+            local n = 0
+            for _ in pairs(Config.GearWhitelist) do n = n + 1 end
+            print(("[NTMT HUB] Mua TAT CA Gear =%s, whitelist=%d"):format(tostring(v), n))
+        end
     end
 })
 
@@ -1387,7 +1408,11 @@ local plantMode     = "Below"
 local plantSpacing  = 6
 local cachedPlantRemote = nil
 
--- CONFIRMED từ source: GameEvents.Plant_RE:FireServer(Position, "SeedName")
+-- Seed selection (cung logic voi Auto Buy)
+local PlantWhitelist = {}  -- {SeedName = true, ...}
+local PlantAll = true       -- ON = plant all seeds co trong inventory
+
+-- CONFIRMED tu source: GameEvents.Plant_RE:FireServer(Position, "SeedName")
 local PLANT_REMOTE_NAMES = {
     "Plant_RE", "PlantSeed", "PlantSeed_RE", "Plant", "PlaceSeed", "PlantItem",
 }
@@ -1404,7 +1429,6 @@ local function findPlantRemote()
             end
         end
     end
-    -- Quét toàn bộ ReplicatedStorage
     for _, obj in ipairs(Services.ReplicatedStorage:GetDescendants()) do
         if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
             local n = obj.Name:lower()
@@ -1417,15 +1441,64 @@ local function findPlantRemote()
     return nil
 end
 
-local function getEquippedSeedName()
+-- Extract seed name from tool name: "Carrot Seed" -> "Carrot"
+local function extractSeedName(toolName)
+    local n = tostring(toolName or "")
+    n = n:gsub(" Seed$", ""):gsub("Seed$", "")
+    return n:match("^%s*(.-)%s*$")
+end
+
+-- Get all seed tools in inventory (Backpack + Character)
+local function getInventorySeedTools()
+    local out = {}
+    local seen = {}
+    for _, container in ipairs({ LocalPlayer.Character, LocalPlayer:FindFirstChildOfClass("Backpack") }) do
+        if container then
+            for _, tool in ipairs(container:GetChildren()) do
+                if tool:IsA("Tool") then
+                    local nlow = tool.Name:lower()
+                    -- Heuristic: tool co "seed" trong ten hoac co attribute SeedName
+                    local isSeed = nlow:find("seed") or tool:GetAttribute("SeedName")
+                    if isSeed and not seen[tool.Name] then
+                        seen[tool.Name] = true
+                        table.insert(out, tool)
+                    end
+                end
+            end
+        end
+    end
+    return out
+end
+
+local function getInventorySeedNames()
+    local names = {}
+    for _, t in ipairs(getInventorySeedTools()) do
+        table.insert(names, t.Name)
+    end
+    return names
+end
+
+local function findToolInInventory(toolName)
+    for _, container in ipairs({ LocalPlayer.Character, LocalPlayer:FindFirstChildOfClass("Backpack") }) do
+        if container then
+            local t = container:FindFirstChild(toolName)
+            if t and t:IsA("Tool") then return t end
+        end
+    end
+    return nil
+end
+
+-- Equip 1 tool (neu chua equipped)
+local function equipTool(tool)
+    if not tool then return false end
     local char = LocalPlayer.Character
-    if not char then return nil end
-    local tool = char:FindFirstChildOfClass("Tool")
-    if not tool then return nil end
-    -- Roblox tool name thường là "Carrot Seed" hoặc "Carrot"
-    local n = tool.Name
-    n = n:gsub(" Seed", ""):gsub("Seed", "")
-    return n:match("^%s*(.-)%s*$"), tool
+    if not char then return false end
+    if tool.Parent == char then return true end  -- da equipped
+    local hum = char:FindFirstChildOfClass("Humanoid")
+    if not hum then return false end
+    pcall(function() hum:EquipTool(tool) end)
+    task.wait(0.05)
+    return tool.Parent == char
 end
 
 local function firePlant(position, seedName)
@@ -1452,22 +1525,63 @@ local function firePlant(position, seedName)
     return false
 end
 
+-- Plant 1 chu ki: equip tool + fire plant theo plantMode
+local function plantOneSeed(tool)
+    if not equipTool(tool) then return false end
+    local hrp = getRoot(LocalPlayer)
+    if not hrp then return false end
+    local seedName = extractSeedName(tool.Name)
+    local center = hrp.Position
+    if plantMode == "Below" then
+        firePlant(center, seedName)
+    elseif plantMode == "Line" then
+        for i = -2, 2 do
+            firePlant(center + Vector3.new(i * plantSpacing, 0, 0), seedName)
+        end
+    elseif plantMode == "Circle" then
+        for i = 0, 5 do
+            local ang = (i / 6) * math.pi * 2
+            local off = Vector3.new(math.cos(ang), 0, math.sin(ang)) * plantSpacing
+            firePlant(center + off, seedName)
+        end
+    end
+    return true
+end
+
+-- Lay danh sach seed list de hien dropdown (init tu inventory)
+local SEED_TOOL_LIST = getInventorySeedNames()
+
 GAGTab:Toggle({
     Title = "Auto Plant",
-    Desc  = "Cần cầm seed (tool) - tự trồng quanh vị trí đang đứng",
+    Desc  = "Tu equip seed trong inventory va plant tai vi tri dang dung",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoPlant = state
         if state then
             local rem = findPlantRemote()
             if not rem then
-                WindUI:Notify({ Title = "Plant Remote", Content = "Không tìm được Plant remote!", Icon = "circle-x", Duration = 4 })
+                WindUI:Notify({ Title = "Plant Remote", Content = "Khong tim duoc Plant remote!", Icon = "circle-x", Duration = 4 })
             end
         end
         WindUI:Notify({
             Title = "Auto Plant",
-            Content = state and "Đã bật" or "Đã tắt",
+            Content = state and "Da bat" or "Da tat",
             Icon = state and "play" or "pause",
+            Duration = 2,
+        })
+    end
+})
+
+GAGTab:Toggle({
+    Title = "Plant TAT CA seed trong inventory",
+    Desc  = "ON = plant het seed co trong inventory | OFF = chi plant seed chon trong dropdown",
+    Default = true,
+    Callback = function(v)
+        PlantAll = v
+        WindUI:Notify({
+            Title = "Plant TAT CA",
+            Content = v and "ON - plant het seed trong inventory" or "OFF - dung dropdown",
+            Icon = v and "play" or "pause",
             Duration = 2,
         })
     end
@@ -1475,7 +1589,42 @@ GAGTab:Toggle({
 
 pcall(function()
     GAGTab:Dropdown({
-        Title = "Chế độ Plant",
+        Title = "Chon Seed de plant (khi 'Plant TAT CA' = OFF)",
+        Values = SEED_TOOL_LIST,
+        Value = nil,
+        Multi = true,
+        AllowNone = true,
+        Callback = function(sel)
+            PlantWhitelist = {}
+            if type(sel) == "table" then
+                for k, v in pairs(sel) do
+                    if type(v) == "string" then PlantWhitelist[v] = true
+                    elseif type(k) == "string" and v then PlantWhitelist[k] = true end
+                end
+            end
+        end
+    })
+end)
+
+GAGTab:Button({
+    Title = "Refresh seed list",
+    Icon  = "refresh-cw",
+    Desc  = "Lam moi danh sach seed neu vua moi nhan duoc seed",
+    Callback = function()
+        SEED_TOOL_LIST = getInventorySeedNames()
+        WindUI:Notify({
+            Title = "Refresh",
+            Content = ("Tim duoc %d loai seed trong inventory"):format(#SEED_TOOL_LIST),
+            Icon = "info",
+            Duration = 3,
+        })
+        print("[NTMT HUB] Inventory seeds:", table.concat(SEED_TOOL_LIST, ", "))
+    end
+})
+
+pcall(function()
+    GAGTab:Dropdown({
+        Title = "Che do Plant",
         Values = { "Below", "Line", "Circle" },
         Value = "Below",
         Multi = false,
@@ -1487,14 +1636,14 @@ pcall(function()
 end)
 
 GAGTab:Slider({
-    Title = "Khoảng cách giữa các plant (studs)",
+    Title = "Khoang cach giua cac plant (studs)",
     Step  = 1,
     Value = { Min = 3, Max = 20, Default = 6 },
     Callback = function(v) plantSpacing = v end
 })
 
 GAGTab:Slider({
-    Title = "Tốc độ Plant (giây)",
+    Title = "Toc do Plant (giay)",
     Step  = 0.1,
     Value = { Min = 0.2, Max = 3, Default = 0.5 },
     Callback = function(v) plantInterval = v end
@@ -1865,28 +2014,28 @@ task.spawn(function()
     end
 end)
 
--- Auto Plant
+-- Auto Plant: equip seed tu inventory roi plant
 task.spawn(function()
     while true do
         task.wait(plantInterval)
         if genv.ftgs_AutoPlant then
             pcall(function()
-                local hrp = getRoot(LocalPlayer)
-                local seed = getEquippedSeedName()
-                if not hrp or not seed then return end
-                local center = hrp.Position
-                if plantMode == "Below" then
-                    firePlant(center, seed)
-                elseif plantMode == "Line" then
-                    for i = -2, 2 do
-                        firePlant(center + Vector3.new(i * plantSpacing, 0, 0), seed)
+                local tools = {}
+                if PlantAll then
+                    -- Plant TAT CA seed trong inventory
+                    tools = getInventorySeedTools()
+                else
+                    -- Chi plant seed co trong dropdown
+                    for _, t in ipairs(getInventorySeedTools()) do
+                        if PlantWhitelist[t.Name] then
+                            table.insert(tools, t)
+                        end
                     end
-                elseif plantMode == "Circle" then
-                    for i = 0, 5 do
-                        local ang = (i / 6) * math.pi * 2
-                        local off = Vector3.new(math.cos(ang), 0, math.sin(ang)) * plantSpacing
-                        firePlant(center + off, seed)
-                    end
+                end
+                for _, tool in ipairs(tools) do
+                    if not genv.ftgs_AutoPlant then break end
+                    plantOneSeed(tool)
+                    task.wait(0.05)
                 end
             end)
         end
