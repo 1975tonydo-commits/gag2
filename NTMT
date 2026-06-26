@@ -111,6 +111,8 @@ if okPlayerState and PlayerStateClient then
     if ok then gearReplica = rep end
 end
 
+local DISCORD_LINK = "https://discord.gg/ntmthub"
+
 ------------------------------------------------------------
 -- 4) WINDOW
 ------------------------------------------------------------
@@ -233,6 +235,23 @@ local function getNextPlantPosition()
     if #savedPlantPositions == 0 then return nil end
     plantSpotIndex = (plantSpotIndex % #savedPlantPositions) + 1
     return savedPlantPositions[plantSpotIndex]
+end
+
+-- Random spot trong plant area (dung chung cho Auto Plant + Sprinkler)
+local function getRandomPlantSpot()
+    if #savedPlantPositions == 0 then cachePlantPositions() end
+    if #savedPlantPositions == 0 then return nil end
+    return savedPlantPositions[math.random(1, #savedPlantPositions)]
+end
+
+local function goToPlantSpot(pos)
+    local hrp = getRoot(LocalPlayer)
+    if not hrp or not pos then return end
+    local flat = (Vector3.new(pos.X, 0, pos.Z) - Vector3.new(hrp.Position.X, 0, hrp.Position.Z)).Magnitude
+    if flat > 8 then
+        pcall(function() hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0)) end)
+        task.wait(0.08)
+    end
 end
 
 local function getPlotIdAttribute()
@@ -359,7 +378,7 @@ local harvestInterval = 0.01
 
 GAGTab:Toggle({
     Title = "Auto Harvest",
-    Desc  = "Tu thu hoach fruit chin (0.01s/lan)",
+    Desc  = "Auto collect all fruit in garden",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoHarvest = state
@@ -504,7 +523,7 @@ end
 
 GAGTab:Toggle({
     Title = "Auto Sell",
-    Desc  = "Tu dong sell inventory moi 2 giay",
+    Desc  = "Auto sell all fruit in inventory",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoSell = state
@@ -685,6 +704,7 @@ local function stealFruit(fruit)
     pcall(function() root.CFrame = hp.CFrame + Vector3.new(0, 2, 0) end)
     pcall(function() Networking.Steal.BeginSteal:Fire(userId, plantId, fruitId) end)
     pcall(function() Networking.Steal.CompleteSteal:Fire() end)
+    StolenFruits = StolenFruits + 1
     return true
 end
 
@@ -693,7 +713,7 @@ local stealBurstCount = 0
 
 GAGTab:Toggle({
     Title = "Auto Steal (chỉ vào ban đêm)",
-    Desc  = "Steal fruit gia tri cao nhat | garden unlock/khong owner | ve garden sau 3 trai",
+    Desc  = "Auto steal best fruit",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoSteal = state
@@ -1034,9 +1054,10 @@ local function tryRawRemote(remote, ...)
     return false
 end
 
--- Bo dem so seed/gear da mua (cho webhook)
+-- Bo dem so seed/gear/pet da mua + fruit steal (cho webhook)
 local BoughtSeeds = {}  -- {SeedName = count}
 local BoughtGears = {}  -- {GearName = count}
+local StolenFruits = 0
 
 local function purchaseSeed(seedName)
     local ok1 = false
@@ -1203,7 +1224,7 @@ GAGTab:Section({ Title = "Auto Buy Seed & Gear" })
 
 GAGTab:Toggle({
     Title = "Auto Buy Seed",
-    Desc  = "Bat de chay auto buy seed (chon mode duoi)",
+    Desc  = "Auto buy select seed",
     Default = false,
     Callback = function(s)
         genv.ftgs_AutoBuySeed = s
@@ -1218,7 +1239,7 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Mua TAT CA Seed",
-    Desc  = "ON = mua het seed trong shop (tu bat 'Auto Buy Seed')",
+    Desc  = "Auto buy all seed stock",
     Default = false,
     Callback = function(v)
         Config.BuyAllSeeds = v
@@ -1253,7 +1274,7 @@ end)
 
 GAGTab:Toggle({
     Title = "Auto Buy Gear",
-    Desc  = "Bat de chay auto buy gear (chon mode duoi)",
+    Desc  = "Auto buy select gear",
     Default = false,
     Callback = function(s)
         genv.ftgs_AutoBuyGear = s
@@ -1268,7 +1289,7 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Mua TAT CA Gear",
-    Desc  = "ON = mua het gear trong shop (tu bat 'Auto Buy Gear')",
+    Desc  = "Auto buy all gear stock",
     Default = false,
     Callback = function(v)
         Config.BuyAllGears = v
@@ -1455,7 +1476,7 @@ end
 
 GAGTab:Toggle({
     Title = "Auto Buy Pet",
-    Desc  = "Tu mua wild pet spawn tren map (Net.Pets.WildPetTame)",
+    Desc  = "Auto buy select pet",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoBuyPet = state
@@ -1473,7 +1494,7 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Mua TAT CA Pet",
-    Desc  = "ON = mua het pet spawn (tu bat Auto Buy Pet) | OFF = chi mua pet chon trong dropdown",
+    Desc  = "Auto buy all pet in server",
     Default = false,
     Callback = function(v)
         BuyAllPets = v
@@ -1585,6 +1606,31 @@ local function equipTool(tool)
     return tool.Parent == char
 end
 
+-- Gear tools (dung chung Plant + Sprinkler)
+local SPRINKLER_RARITIES = { "Super", "Legendary", "Rare", "Uncommon", "Common" }
+local SPRINKLER_PRIORITY = { "Super Sprinkler", "Legendary Sprinkler", "Rare Sprinkler", "Uncommon Sprinkler", "Common Sprinkler" }
+local WATERINGCAN_PRIORITY = { "Super Watering Can", "Common Watering Can" }
+
+local function findGearByAttr(attrName, priorityList)
+    local found = {}
+    local function scan(c)
+        if not c then return end
+        for _, t in ipairs(c:GetChildren()) do
+            if t:IsA("Tool") then
+                local name = t:GetAttribute(attrName)
+                if name then found[name] = t end
+            end
+        end
+    end
+    scan(LocalPlayer.Character)
+    scan(LocalPlayer:FindFirstChild("Backpack"))
+    for _, name in ipairs(priorityList) do
+        local t = found[name]
+        if t then return t, name end
+    end
+    return nil
+end
+
 -- Fire plant qua Networking.Plant.PlantSeed (CHUAN tu source)
 local function firePlant(plantPos, seedName, tool)
     if not Networking then return false end
@@ -1594,31 +1640,53 @@ local function firePlant(plantPos, seedName, tool)
     return ok
 end
 
--- Plant 1 chu ki: equip seed tool roi fire plant
+-- Plant 1 lan: equip seed -> random plant spot -> fire
 local function plantOneSeed(seedName)
     local tool = findSeedTool(seedName)
     if not tool then return false end
     if not equipTool(tool) then return false end
 
-    local plantPos = getNextPlantPosition()
+    local plantPos = getRandomPlantSpot()
     if not plantPos then return false end
-
-    -- TP toi gan plant area neu xa
-    local hrp = getRoot(LocalPlayer)
-    if hrp then
-        local flat = (Vector3.new(plantPos.X, 0, plantPos.Z) - Vector3.new(hrp.Position.X, 0, hrp.Position.Z)).Magnitude
-        if flat > 25 then
-            pcall(function() hrp.CFrame = CFrame.new(plantPos + Vector3.new(0, 3, 0)) end)
-            task.wait(0.05)
-        end
-    end
-
+    goToPlantSpot(plantPos)
     return firePlant(plantPos, seedName, tool)
+end
+
+-- Sprinkler/Watering: equip gear -> random plant spot -> fire (cung logic plant)
+local function useSprinklerAtRandomSpot()
+    if not Networking then return false end
+    local plotId = getPlotIdAttribute()
+    if not plotId then return false end
+    local plantPos = getRandomPlantSpot()
+    if not plantPos then return false end
+    goToPlantSpot(plantPos)
+
+    local canTool, canName = findGearByAttr("WateringCan", WATERINGCAN_PRIORITY)
+    local sprinklerTool, sprinklerName = findGearByAttr("Sprinkler", SPRINKLER_PRIORITY)
+    if not canTool and not sprinklerTool then return false end
+
+    local used = false
+    if canTool and Networking.WateringCan and Networking.WateringCan.UseWateringCan then
+        equipTool(canTool)
+        pcall(function()
+            Networking.WateringCan.UseWateringCan:Fire(plantPos - Vector3.new(0, 0.3, 0), canName, canTool)
+        end)
+        used = true
+        task.wait(0.4)
+    end
+    if sprinklerTool and Networking.Place and Networking.Place.PlaceSprinkler then
+        equipTool(sprinklerTool)
+        pcall(function()
+            Networking.Place.PlaceSprinkler:Fire(plantPos, sprinklerName, sprinklerTool, plotId)
+        end)
+        used = true
+    end
+    return used
 end
 
 GAGTab:Toggle({
     Title = "Auto Plant",
-    Desc  = "Tu equip seed (SeedTool attr) va plant theo plant area cua plot",
+    Desc  = "Hold seed, plant random spot",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoPlant = state
@@ -1634,10 +1702,10 @@ GAGTab:Toggle({
                     WindUI:Notify({ Title = "Auto Plant", Content = ("DA BAT - plant tat ca (%d loai seed)"):format(n), Icon = "play", Duration = 3 })
                 end
             elseif next(PlantWhitelist) == nil then
-                WindUI:Notify({ Title = "Auto Plant", Content = "Chon seed trong dropdown truoc (hoac bat Plant TAT CA)", Icon = "circle-x", Duration = 4 })
+                WindUI:Notify({ Title = "Auto Plant", Content = "Chon seed trong dropdown truoc", Icon = "circle-x", Duration = 4 })
             else
                 cachePlantPositions()
-                WindUI:Notify({ Title = "Auto Plant", Content = "DA BAT - chi plant seed da chon", Icon = "play", Duration = 3 })
+                WindUI:Notify({ Title = "Auto Plant", Content = "DA BAT", Icon = "play", Duration = 2 })
             end
         else
             WindUI:Notify({ Title = "Auto Plant", Content = "Da tat", Icon = "pause", Duration = 2 })
@@ -1692,7 +1760,7 @@ local expandInterval = 8
 
 GAGTab:Toggle({
     Title = "Auto Expand Garden",
-    Desc  = "Tu mua expansion khi du tien (Net.Actions.ExpandGarden)",
+    Desc  = "Auto expand garden plot",
     Default = false,
     Callback = function(v)
         genv.ftgs_AutoExpand = v
@@ -1720,54 +1788,27 @@ end)
 GAGTab:Section({ Title = "Auto Sprinkler & Watering" })
 
 genv.ftgs_AutoSprinkler = false
-local sprinklerInterval = 0.6
-
--- Sprinkler rarity priority list (default: het loai)
-local SPRINKLER_RARITIES = { "Super", "Legendary", "Rare", "Uncommon", "Common" }
-local SPRINKLER_PRIORITY = { "Super Sprinkler", "Legendary Sprinkler", "Rare Sprinkler", "Uncommon Sprinkler", "Common Sprinkler" }
-local WATERINGCAN_PRIORITY = { "Super Watering Can", "Common Watering Can" }
-
--- Tim gear tool theo attribute (Sprinkler / WateringCan)
-local function findGearByAttr(attrName, priorityList)
-    local found = {}
-    local function scan(c)
-        if not c then return end
-        for _, t in ipairs(c:GetChildren()) do
-            if t:IsA("Tool") then
-                local name = t:GetAttribute(attrName)
-                if name then found[name] = t end
-            end
-        end
-    end
-    scan(LocalPlayer.Character)
-    scan(LocalPlayer:FindFirstChild("Backpack"))
-    for _, name in ipairs(priorityList) do
-        local t = found[name]
-        if t then return t, name end
-    end
-    return nil
-end
+local sprinklerInterval = 0.5
 
 GAGTab:Toggle({
     Title = "Auto Sprinkler + Watering Can",
-    Desc  = "Tu su dung Sprinkler + Watering Can len plant chua chin",
+    Desc  = "Hold gear, dat random plant spot",
     Default = false,
     Callback = function(v)
         genv.ftgs_AutoSprinkler = v
+        if v then cachePlantPositions() end
         WindUI:Notify({ Title = "Auto Sprinkler", Content = v and "DA BAT" or "Da tat", Icon = v and "play" or "pause", Duration = 2 })
     end
 })
 
 pcall(function()
     GAGTab:Dropdown({
-        Title = "Chon Sprinkler rarity (uu tien tu cao xuong thap)",
+        Title = "Chon Sprinkler rarity",
         Values = SPRINKLER_RARITIES,
         Value = SPRINKLER_RARITIES,
         Multi = true,
         AllowNone = false,
         Callback = function(sel)
-            -- Build priority list theo rarity chon
-            local order = { Super = 1, Legendary = 2, Rare = 3, Uncommon = 4, Common = 5 }
             local enabled = {}
             if type(sel) == "table" then
                 for k, v in pairs(sel) do
@@ -1775,71 +1816,21 @@ pcall(function()
                     if type(name) == "string" then enabled[name] = true end
                 end
             end
-            -- Sort by priority
             local list = {}
             for _, r in ipairs(SPRINKLER_RARITIES) do
-                if enabled[r] then
-                    table.insert(list, r .. " Sprinkler")
-                end
+                if enabled[r] then table.insert(list, r .. " Sprinkler") end
             end
-            if #list == 0 then list = { "Super Sprinkler", "Legendary Sprinkler", "Rare Sprinkler", "Uncommon Sprinkler", "Common Sprinkler" } end
-            SPRINKLER_PRIORITY = list
+            if #list > 0 then SPRINKLER_PRIORITY = list end
         end
     })
 end)
 
-GAGTab:Slider({
-    Title = "Chu ky Sprinkler (giay)",
-    Step  = 0.1,
-    Value = { Min = 0.3, Max = 5, Default = 0.6 },
-    Callback = function(v) sprinklerInterval = v end
-})
-
--- Loop
+-- Loop (cung logic random spot nhu Auto Plant)
 task.spawn(function()
     while true do
         task.wait(sprinklerInterval)
-        if genv.ftgs_AutoSprinkler and Networking then
-            pcall(function()
-                local plotId = getPlotIdAttribute()
-                if not plotId then return end
-                local plantPos = getNextPlantPosition()
-                if not plantPos then return end
-
-                local canTool, canName = findGearByAttr("WateringCan", WATERINGCAN_PRIORITY)
-                local sprinklerTool, sprinklerName = findGearByAttr("Sprinkler", SPRINKLER_PRIORITY)
-                if not canTool and not sprinklerTool then return end
-
-                local hrp = getRoot(LocalPlayer)
-                local savedCF = hrp and hrp.CFrame
-                if hrp then
-                    local flat = (Vector3.new(plantPos.X, 0, plantPos.Z) - Vector3.new(hrp.Position.X, 0, hrp.Position.Z)).Magnitude
-                    if flat > 25 then
-                        pcall(function() hrp.CFrame = CFrame.new(plantPos + Vector3.new(0, 3, 0)) end)
-                        task.wait(0.05)
-                    end
-                end
-
-                if canTool and Networking.WateringCan and Networking.WateringCan.UseWateringCan then
-                    equipTool(canTool)
-                    pcall(function()
-                        Networking.WateringCan.UseWateringCan:Fire(plantPos - Vector3.new(0, 0.3, 0), canName, canTool)
-                    end)
-                    task.wait(0.5)
-                end
-
-                if sprinklerTool and Networking.Place and Networking.Place.PlaceSprinkler then
-                    equipTool(sprinklerTool)
-                    pcall(function()
-                        Networking.Place.PlaceSprinkler:Fire(plantPos, sprinklerName, sprinklerTool, plotId)
-                    end)
-                    task.wait(0.3)
-                end
-
-                if hrp and savedCF then
-                    pcall(function() hrp.CFrame = savedCF end)
-                end
-            end)
+        if genv.ftgs_AutoSprinkler then
+            pcall(useSprinklerAtRandomSpot)
         end
     end
 end)
@@ -1899,7 +1890,7 @@ end
 
 GAGTab:Toggle({
     Title = "Auto Shovel",
-    Desc  = "Tu shovel plant da chon (can cam Shovel tool)",
+    Desc  = "Auto shovel select plant",
     Default = false,
     Callback = function(v)
         genv.ftgs_AutoShovel = v
@@ -2054,7 +2045,7 @@ end
 
 GAGTab:Toggle({
     Title = "Anti-Steal Shovel",
-    Desc  = "Khi có player vào plot bạn, TP đến và hit họ bằng shovel",
+    Desc  = "Hit player stealing in your garden",
     Default = false,
     Callback = function(state)
         genv.ftgs_AntiSteal = state
@@ -2162,7 +2153,7 @@ end
 
 GAGTab:Toggle({
     Title = "Auto Collect Rainbow/Gold Seed",
-    Desc  = "Tự nhặt rainbow seed và gold seed trên map",
+    Desc  = "Auto collect rainbow/gold seed",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoCollectRainbowGold = state
@@ -2177,7 +2168,7 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Auto Collect Item Drop",
-    Desc  = "Tự nhặt mọi item drop có Pickup/Collect prompt",
+    Desc  = "Auto collect item drop",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoCollectItemDrop = state
@@ -2322,7 +2313,8 @@ WebhookTab:Section({ Title = "Discord Webhook" })
 local WEBHOOK_SAVE_PATH = "ntmthub_webhook.txt"
 local webhookUrl = ""
 local webhookEnabled = false
-local webhookInterval = 300  -- 5 phut
+local webhookIntervalMinutes = 5
+local webhookInterval = webhookIntervalMinutes * 60
 
 -- Load webhook url da save
 if hasFs and isfile and isfile(WEBHOOK_SAVE_PATH) then
@@ -2369,24 +2361,30 @@ local WEATHER_NAMES = {
 }
 
 local function findActiveWeather()
-    -- Check 1: ReplicatedStorage.Weather/ActiveWeather (StringValue)
+    local WS = Services.Workspace
     local RS = Services.ReplicatedStorage
-    for _, name in ipairs({ "ActiveWeather", "Weather", "CurrentWeather", "WeatherType", "WeatherEvent" }) do
-        local obj = RS:FindFirstChild(name)
+
+    -- Uu tien ActiveWeather attribute (Blood Moon, Rain, ...)
+    local active = WS:GetAttribute("ActiveWeather")
+    if type(active) == "string" and active ~= "" then return active end
+    active = RS:GetAttribute("ActiveWeather")
+    if type(active) == "string" and active ~= "" then return active end
+
+    for _, parent in ipairs({ WS, RS }) do
+        local obj = parent:FindFirstChild("ActiveWeather")
         if obj then
-            if obj:IsA("StringValue") and obj.Value and #obj.Value > 0 then return obj.Value end
+            if obj:IsA("StringValue") and obj.Value ~= "" then return obj.Value end
             if obj:IsA("Folder") or obj:IsA("Configuration") then
                 for _, c in ipairs(obj:GetChildren()) do
-                    if (c:IsA("BoolValue") and c.Value) or (c:IsA("StringValue") and #c.Value > 0) then
-                        return c.Name
-                    end
+                    if c:IsA("BoolValue") and c.Value then return c.Name end
+                    if c:IsA("StringValue") and c.Value ~= "" then return c.Value end
                 end
             end
         end
     end
-    -- Check 2: Workspace.WeatherEvents/Effects con
-    local WS = Services.Workspace
-    for _, name in ipairs({ "WeatherEvents", "Weather", "ActiveWeather", "WeatherEffects" }) do
+
+    -- Workspace weather effects
+    for _, name in ipairs({ "WeatherEvents", "Weather", "WeatherEffects" }) do
         local obj = WS:FindFirstChild(name)
         if obj then
             for _, c in ipairs(obj:GetChildren()) do
@@ -2396,27 +2394,31 @@ local function findActiveWeather()
             end
         end
     end
-    -- Check 3: Night
+
+    local phase = WS:GetAttribute("ActivePhase")
+    if type(phase) == "string" and phase ~= "" then return phase end
+
     local night = RS:FindFirstChild("Night")
     if night and night.Value then return "Night" end
     return "Day"
 end
 
--- Lay end time (epoch hoac so giay con lai)
 local function findWeatherEndTime()
+    local WS = Services.Workspace
+    local phaseEnd = WS:GetAttribute("PhaseDuration")
+    if phaseEnd then
+        local now = (WS.GetServerTimeNow and WS:GetServerTimeNow()) or os.time()
+        local remain = math.max(0, tonumber(phaseEnd) - now)
+        return ("%dm %ds"):format(math.floor(remain / 60), remain % 60)
+    end
     local RS = Services.ReplicatedStorage
     for _, name in ipairs({ "WeatherEndTime", "WeatherEnd", "EndTime", "WeatherUnixEnd" }) do
         local v = RS:FindFirstChild(name)
         if v and v.Value then
             local n = tonumber(v.Value)
             if n then
-                if n > os.time() then
-                    -- epoch
-                    return os.date("%H:%M:%S", n)
-                else
-                    -- so giay con lai
-                    return ("~%ds"):format(math.floor(n))
-                end
+                if n > os.time() then return os.date("%H:%M:%S", n) end
+                return ("~%ds"):format(math.floor(n))
             end
         end
     end
@@ -2428,20 +2430,46 @@ end
 ------------------------------------------------------------
 
 local function getInventorySnapshot()
-    local items = {}
-    local total = 0
-    for _, container in ipairs({ LocalPlayer.Character, LocalPlayer:FindFirstChildOfClass("Backpack") }) do
-        if container then
-            for _, tool in ipairs(container:GetChildren()) do
-                if tool:IsA("Tool") then
-                    local count = tonumber(tool:GetAttribute("Count")) or 1
-                    items[tool.Name] = (items[tool.Name] or 0) + count
-                    total = total + count
+    local lines = {}
+    if gearReplica and gearReplica.Data and gearReplica.Data.Inventory then
+        local inv = gearReplica.Data.Inventory
+        for category, bucket in pairs(inv) do
+            if type(bucket) == "table" then
+                for key, entry in pairs(bucket) do
+                    local count = 0
+                    local label = tostring(key)
+                    if type(entry) == "number" then
+                        count = entry
+                    elseif type(entry) == "table" then
+                        count = entry.Count or entry.Amount or 1
+                        label = entry.Name or entry.FruitName or label
+                    end
+                    if count > 0 then
+                        table.insert(lines, { text = ("[%s] %s x%d"):format(tostring(category), label, count), count = count })
+                    end
                 end
             end
         end
     end
-    return items, total
+    if #lines == 0 then
+        for _, container in ipairs({ LocalPlayer.Character, LocalPlayer:FindFirstChild("Backpack") }) do
+            if container then
+                for _, tool in ipairs(container:GetChildren()) do
+                    if tool:IsA("Tool") then
+                        local count = tonumber(tool:GetAttribute("Count")) or 1
+                        table.insert(lines, { text = ("%s x%d"):format(tool.Name, count), count = count })
+                    end
+                end
+            end
+        end
+    end
+    table.sort(lines, function(a, b) return a.count > b.count end)
+    local out, total = {}, 0
+    for _, it in ipairs(lines) do
+        table.insert(out, it.text)
+        total = total + it.count
+    end
+    return out, total
 end
 
 ------------------------------------------------------------
@@ -2449,66 +2477,61 @@ end
 ------------------------------------------------------------
 
 local function buildEmbed()
-    local accountName = LocalPlayer.DisplayName ~= LocalPlayer.Name
-        and ("%s (@%s)"):format(LocalPlayer.DisplayName, LocalPlayer.Name)
-        or LocalPlayer.Name
+    local accountName = LocalPlayer.Name
 
     local weather = findActiveWeather()
     local weatherEnd = findWeatherEndTime()
 
-    -- Seeds bought
-    local seedLines = {}
+    local seedList, gearList = {}, {}
     for name, amt in pairs(BoughtSeeds) do
-        if amt > 0 then table.insert(seedLines, ("• %s x%d"):format(name, amt)) end
+        if amt > 0 then table.insert(seedList, { name = name, amt = amt }) end
     end
-    if #seedLines == 0 then table.insert(seedLines, "_(chua mua seed nao)_") end
-
-    -- Gears bought
-    local gearLines = {}
     for name, amt in pairs(BoughtGears) do
-        if amt > 0 then table.insert(gearLines, ("• %s x%d"):format(name, amt)) end
+        if amt > 0 then table.insert(gearList, { name = name, amt = amt }) end
     end
-    if #gearLines == 0 then table.insert(gearLines, "_(chua mua gear nao)_") end
+    table.sort(seedList, function(a, b) return a.amt > b.amt end)
+    table.sort(gearList, function(a, b) return a.amt > b.amt end)
 
-    -- Pets bought
+    local buyLines = {}
+    local maxRows = math.max(#seedList, #gearList, 1)
+    for i = 1, maxRows do
+        local s = seedList[i]
+        local g = gearList[i]
+        local left = s and ("[%s x%d]"):format(s.name, s.amt) or "[-]"
+        local right = g and ("[%s x%d]"):format(g.name, g.amt) or "[-]"
+        table.insert(buyLines, left .. "  " .. right)
+    end
+    if #buyLines == 0 then table.insert(buyLines, "[chua mua seed/gear]") end
+
     local petLines = {}
     for name, amt in pairs(BoughtPets) do
-        if amt > 0 then table.insert(petLines, ("• %s x%d"):format(name, amt)) end
+        if amt > 0 then table.insert(petLines, ("[%s x%d]"):format(name, amt)) end
     end
-    if #petLines == 0 then table.insert(petLines, "_(chua mua pet nao)_") end
+    if #petLines == 0 then table.insert(petLines, "[chua mua pet]") end
 
-    -- Inventory snapshot
-    local invItems, invTotal = getInventorySnapshot()
-    local invLines = {}
-    local invSorted = {}
-    for k, v in pairs(invItems) do table.insert(invSorted, { name = k, count = v }) end
-    table.sort(invSorted, function(a, b) return a.count > b.count end)
-    for i, it in ipairs(invSorted) do
-        if i > 25 then break end
-        table.insert(invLines, ("• %s x%d"):format(it.name, it.count))
-    end
-    if #invLines == 0 then table.insert(invLines, "_(empty)_") end
+    local invLines, invTotal = getInventorySnapshot()
+    if #invLines == 0 then table.insert(invLines, "[empty]") end
 
     local sheckles = getSheckles()
+    local stealText = StolenFruits > 0 and tostring(StolenFruits) or "none"
 
     local desc = table.concat({
-        ("** [ %s ] **"):format(accountName),
+        ("** %s **"):format(accountName),
         "",
-        "** weather **",
-        weather,
-        ("end: %s"):format(tostring(weatherEnd)),
+        "** weather: **",
+        ("[%s] [end: %s]"):format(weather, weatherEnd),
         "",
         "** seed and gear **",
-        table.concat(seedLines, "\n"),
-        table.concat(gearLines, "\n"),
+        table.concat(buyLines, "\n"),
         "",
-        "** pets **",
+        "** pet **",
         table.concat(petLines, "\n"),
         "",
         "** inventory **",
         table.concat(invLines, "\n"),
         "",
-        ("** sheckles amount: %s **"):format(tostring(sheckles)),
+        ("sheckles amount: %s"):format(tostring(sheckles)),
+        ("fruit steal: %s"):format(stealText),
     }, "\n")
 
     return {
@@ -2518,7 +2541,7 @@ local function buildEmbed()
                 title = "NTMT HUB | Grow a Garden 2",
                 description = desc,
                 color = 5763719,
-                footer = { text = ("Total inv: %d items"):format(invTotal) },
+                footer = { text = ("Inv items: %d"):format(invTotal) },
                 timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
             },
         },
@@ -2544,7 +2567,7 @@ end
 pcall(function()
     WebhookTab:Input({
         Title = "Webhook URL",
-        Desc  = "Paste Discord webhook URL vao day. Tu dong save de lan sau khong can paste lai.",
+        Desc  = "Discord webhook URL",
         Value = webhookUrl,
         InputIcon = "link",
         Placeholder = "https://discord.com/api/webhooks/...",
@@ -2559,7 +2582,7 @@ end)
 
 WebhookTab:Toggle({
     Title = "Auto Notification",
-    Desc  = ("Gui webhook moi %ds (mac dinh 5 phut)"):format(webhookInterval),
+    Desc  = "Gui webhook theo so phut da nhap",
     Default = false,
     Callback = function(v)
         webhookEnabled = v
@@ -2568,19 +2591,29 @@ WebhookTab:Toggle({
         end
         WindUI:Notify({
             Title = "Auto Notification",
-            Content = v and "DA BAT" or "Da tat",
+            Content = v and ("DA BAT - moi " .. webhookIntervalMinutes .. " phut") or "Da tat",
             Icon = v and "bell" or "bell-off",
             Duration = 2,
         })
     end
 })
 
-WebhookTab:Slider({
-    Title = "Chu ky gui (giay)",
-    Step  = 30,
-    Value = { Min = 60, Max = 1800, Default = 300 },
-    Callback = function(v) webhookInterval = v end
-})
+pcall(function()
+    WebhookTab:Input({
+        Title = "Chu ky gui (phut)",
+        Desc  = "1 = 1 phut | 2 = 2 phut | ...",
+        Value = tostring(webhookIntervalMinutes),
+        InputIcon = "clock",
+        Placeholder = "5",
+        Callback = function(v)
+            local n = tonumber(tostring(v or ""):match("%d+"))
+            if n and n >= 1 then
+                webhookIntervalMinutes = math.floor(n)
+                webhookInterval = webhookIntervalMinutes * 60
+            end
+        end,
+    })
+end)
 
 WebhookTab:Button({
     Title = "Test gui webhook ngay",
@@ -2601,6 +2634,7 @@ WebhookTab:Button({
         BoughtSeeds = {}
         BoughtGears = {}
         BoughtPets  = {}
+        StolenFruits = 0
         WindUI:Notify({ Title = "Reset", Content = "Bo dem mua = 0", Icon = "circle-check", Duration = 2 })
     end
 })
@@ -2608,7 +2642,7 @@ WebhookTab:Button({
 -- Auto webhook loop
 task.spawn(function()
     while true do
-        task.wait(webhookInterval)
+        task.wait(math.max(60, webhookIntervalMinutes * 60))
         if webhookEnabled and webhookUrl and webhookUrl ~= "" then
             pcall(sendWebhook, "auto")
         end
@@ -2618,6 +2652,33 @@ end)
 ------------------------------------------------------------
 -- 13c) JOIN SERVER (JobId)
 ------------------------------------------------------------
+
+local function hopRandomServer()
+    local TS = game:GetService("TeleportService")
+    local HS = game:GetService("HttpService")
+    local placeId = game.PlaceId
+    local url = ("https://games.roblox.com/v1/games/%d/servers/Public?sortOrder=Asc&limit=100"):format(placeId)
+    local ok, body = pcall(function() return universalHttpGet(url) end)
+    if not ok or not body then
+        WindUI:Notify({ Title = "Server Hop", Content = "Khong lay duoc server list", Icon = "circle-x", Duration = 4 })
+        return false
+    end
+    local ok2, data = pcall(function() return HS:JSONDecode(body) end)
+    if not ok2 or type(data) ~= "table" then return false end
+    local candidates = {}
+    for _, s in ipairs(data.data or {}) do
+        if s.id and s.id ~= game.JobId then
+            table.insert(candidates, s.id)
+        end
+    end
+    if #candidates == 0 then
+        WindUI:Notify({ Title = "Server Hop", Content = "Khong co server khac", Icon = "circle-x", Duration = 3 })
+        return false
+    end
+    local jobId = candidates[math.random(1, #candidates)]
+    pcall(function() TS:TeleportToPlaceInstance(placeId, jobId, LocalPlayer) end)
+    return true
+end
 
 local ServerTab = Window:Tab({ Title = "Server Hop", Icon = "server" })
 ServerTab:Section({ Title = "Join Server theo JobId" })
@@ -2680,6 +2741,16 @@ ServerTab:Button({
 })
 
 ServerTab:Button({
+    Title = "Hop server khac (1 click)",
+    Icon  = "shuffle",
+    Desc  = "Random hop sang server khac",
+    Callback = function()
+        WindUI:Notify({ Title = "Server Hop", Content = "Dang hop server...", Icon = "send", Duration = 2 })
+        hopRandomServer()
+    end
+})
+
+ServerTab:Button({
     Title = "Copy JobId hien tai",
     Icon  = "copy",
     Callback = function()
@@ -2690,6 +2761,120 @@ ServerTab:Button({
         print("[NTMT HUB] Current JobId:", jobId)
     end
 })
+
+------------------------------------------------------------
+-- 13c2) SERVER - AUTO FIND PET
+------------------------------------------------------------
+
+local FindPetTab = Window:Tab({ Title = "Server", Icon = "radar" })
+
+local FIND_PET_LIST = {
+    "Frog", "Bunny", "Owl", "Deer", "Turtle", "Robin", "Bee", "Monkey", "Bear",
+    "Golden Dragonfly", "Unicorn", "Raccoon", "Black Dragon", "Ice Serpent",
+    "Golden Bee", "Phoenix", "Dragon", "Cat", "Dog", "Penguin",
+}
+
+local findPetTarget = ""
+local autoFindPet = false
+local isFindingPet = false
+
+local function serverHasPet(petName)
+    if petName == "" then return false end
+    for _, model in ipairs(collectWildPetModels()) do
+        local species = model:GetAttribute("PetName") or model.Name
+        if matchesPetName(species, petName) then return true, model end
+    end
+    return false
+end
+
+FindPetTab:Section({ Title = "Auto Find Pet" })
+
+pcall(function()
+    FindPetTab:Dropdown({
+        Title = "Chon pet can tim",
+        Values = FIND_PET_LIST,
+        Value = nil,
+        Multi = false,
+        AllowNone = true,
+        Callback = function(v)
+            if type(v) == "string" and v ~= "" then
+                findPetTarget = v
+            elseif type(v) == "table" then
+                for k, val in pairs(v) do
+                    findPetTarget = (type(val) == "string" and val) or (type(k) == "string" and k) or findPetTarget
+                    break
+                end
+            end
+        end,
+    })
+end)
+
+FindPetTab:Toggle({
+    Title = "Auto Find Pet",
+    Desc  = "Tim server co pet da chon, tu hop khi tim thay",
+    Default = false,
+    Callback = function(v)
+        autoFindPet = v
+        if v and findPetTarget == "" then
+            WindUI:Notify({ Title = "Find Pet", Content = "Chon pet truoc!", Icon = "circle-x", Duration = 3 })
+            autoFindPet = false
+            return
+        end
+        WindUI:Notify({ Title = "Auto Find Pet", Content = v and "DA BAT" or "Da tat", Icon = v and "play" or "pause", Duration = 2 })
+    end
+})
+
+FindPetTab:Button({
+    Title = "Scan server hien tai",
+    Icon  = "search",
+    Callback = function()
+        if findPetTarget == "" then
+            WindUI:Notify({ Title = "Find Pet", Content = "Chon pet truoc!", Icon = "circle-x", Duration = 3 })
+            return
+        end
+        local found = serverHasPet(findPetTarget)
+        WindUI:Notify({
+            Title = "Find Pet",
+            Content = found and ("Co " .. findPetTarget .. " tren server nay!") or ("Khong co " .. findPetTarget),
+            Icon = found and "check" or "x",
+            Duration = 4,
+        })
+    end
+})
+
+FindPetTab:Button({
+    Title = "Hop server khac ngay",
+    Icon  = "shuffle",
+    Callback = function()
+        hopRandomServer()
+    end
+})
+
+task.spawn(function()
+    while true do
+        task.wait(2)
+        if autoFindPet and findPetTarget ~= "" and not isFindingPet then
+            isFindingPet = true
+            pcall(function()
+                local found = serverHasPet(findPetTarget)
+                if found then
+                    autoFindPet = false
+                    WindUI:Notify({
+                        Title = "Pet Found!",
+                        Content = findPetTarget .. " - dung hop, o lai server nay",
+                        Icon = "check",
+                        Duration = 8,
+                    })
+                else
+                    task.wait(1)
+                    hopRandomServer()
+                    task.wait(8)
+                end
+            end)
+            isFindingPet = false
+        end
+    end
+end)
 
 ------------------------------------------------------------
 -- 13e) SHOP STOCK (Live)
@@ -2705,7 +2890,7 @@ local seedStockPara = ShopTab:Paragraph({
 
 ShopTab:Section({ Title = "Gear Shop (live)" })
 local gearStockPara = ShopTab:Paragraph({
-    Title = "Shop Gear stock right now",
+    Title = "Tat ca gear dang stock",
     Desc  = "Dang tai...",
 })
 
@@ -2729,13 +2914,8 @@ local function buildSeedStockText()
     end
     table.sort(list, function(a, b) return a.stock > b.stock end)
     local lines = {}
-    local maxShow = math.min(#list, 15)
-    for i = 1, maxShow do
-        local it = list[i]
+    for _, it in ipairs(list) do
         table.insert(lines, ("%s x%d | %s"):format(it.name, it.stock, it.cost and (tostring(it.cost) .. " sheckles") or "?"))
-    end
-    if #list > maxShow then
-        table.insert(lines, ("... +%d seed khac"):format(#list - maxShow))
     end
     if #lines == 0 then return "(Het stock seed)" end
     return table.concat(lines, "\n")
@@ -2749,22 +2929,23 @@ local function buildGearStockText()
     for _, val in ipairs(items:GetChildren()) do
         if val:IsA("ValueBase") then
             local stock = getGearRemainingStock(val.Name)
-            if stock > 0 then
-                table.insert(list, { name = val.Name, stock = stock, cost = getGearCost(val.Name) })
-            end
+            table.insert(list, { name = val.Name, stock = stock, cost = getGearCost(val.Name) })
         end
     end
-    table.sort(list, function(a, b) return a.stock > b.stock end)
+    table.sort(list, function(a, b)
+        if a.stock ~= b.stock then return a.stock > b.stock end
+        return a.name < b.name
+    end)
     local lines = {}
-    local maxShow = math.min(#list, 15)
-    for i = 1, maxShow do
-        local it = list[i]
-        table.insert(lines, ("%s x%d | %s"):format(it.name, it.stock, it.cost and (tostring(it.cost) .. " sheckles") or "?"))
-    end
-    if #list > maxShow then
-        table.insert(lines, ("... +%d gear khac"):format(#list - maxShow))
+    local inStock = 0
+    for _, it in ipairs(list) do
+        if it.stock > 0 then
+            inStock = inStock + 1
+            table.insert(lines, ("%s x%d | %s"):format(it.name, it.stock, it.cost and (tostring(it.cost) .. " sheckles") or "?"))
+        end
     end
     if #lines == 0 then return "(Het stock gear)" end
+    table.insert(lines, 1, ("--- %d gear dang stock ---"):format(inStock))
     return table.concat(lines, "\n")
 end
 
@@ -3036,274 +3217,28 @@ task.spawn(function()
 end)
 
 ------------------------------------------------------------
--- 15) INFO / DEBUG TAB
+------------------------------------------------------------
+-- 15) INFO TAB
 ------------------------------------------------------------
 
 local InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
 
-InfoTab:Section({ Title = "Trạng thái" })
-
-InfoTab:Paragraph({ Title = "Executor", Desc = Executor })
+InfoTab:Section({ Title = "Discord Script" })
 InfoTab:Paragraph({
-    Title = "Platform",
-    Desc  = (function()
-        local UIS = game:GetService("UserInputService")
-        if UIS.TouchEnabled and not UIS.MouseEnabled and not UIS.KeyboardEnabled then return "Mobile" end
-        if UIS.TouchEnabled and UIS.MouseEnabled then return "Hybrid" end
-        return "PC"
-    end)(),
-})
-InfoTab:Paragraph({ Title = "Networking module", Desc = Networking and "Loaded" or "NOT FOUND" })
-InfoTab:Paragraph({ Title = "FruitValueCalc",   Desc = FruitValueCalc and "Loaded" or "NOT FOUND" })
-InfoTab:Paragraph({ Title = "Gardens folder",   Desc = Gardens and "Found" or "NOT FOUND" })
-
-local nightStatus = InfoTab:Paragraph({
-    Title = "Night Time",
-    Desc  = isNightTime() and "DEM" or "NGAY",
+    Title = "Discord",
+    Desc  = DISCORD_LINK,
 })
 
-local plotStatus = InfoTab:Paragraph({
-    Title = "My Plot",
-    Desc  = getOwnedPlot() and ("Plot: " .. getOwnedPlot().Name) or "Không tìm thấy",
+InfoTab:Section({ Title = "Executor" })
+InfoTab:Paragraph({
+    Title = "Executor",
+    Desc  = Executor,
 })
 
-task.spawn(function()
-    while task.wait(2) do
-        pcall(function()
-            nightStatus:SetDesc(isNightTime() and "DEM" or "NGAY")
-            local plot = getOwnedPlot()
-            plotStatus:SetDesc(plot and ("Plot: " .. plot.Name) or "Không tìm thấy")
-        end)
-    end
-end)
-
-InfoTab:Section({ Title = "Debug" })
-
-InfoTab:Button({
-    Title = "List Networking categories",
-    Icon  = "list",
-    Callback = function()
-        if not Networking then
-            WindUI:Notify({ Title = "Lỗi", Content = "Networking chưa load", Icon = "x", Duration = 3 })
-            return
-        end
-        print("===== Networking categories =====")
-        for k, v in pairs(Networking) do
-            print(k, "->", type(v))
-            if type(v) == "table" then
-                for k2, _ in pairs(v) do print("    ." .. tostring(k2)) end
-            end
-        end
-        WindUI:Notify({ Title = "Debug", Content = "Xem console (F9)", Icon = "terminal", Duration = 3 })
-    end
-})
-
-InfoTab:Button({
-    Title = "Đếm fruit trên plot của bạn",
-    Icon  = "apple",
-    Callback = function()
-        local list = getHarvestablePlants()
-        WindUI:Notify({
-            Title = "Plants",
-            Content = ("%d fruit/plant"):format(#list),
-            Icon = "info",
-            Duration = 3,
-        })
-    end
-})
-
-InfoTab:Section({ Title = "DEBUG AUTO PLANT" })
-
-InfoTab:Button({
-    Title = "Chan doan Auto Plant (console F9)",
-    Icon  = "search",
-    Callback = function()
-        print("=== AUTO PLANT DIAGNOSTIC ===")
-        print("Networking.Plant:", Networking and Networking.Plant or "NIL")
-        if Networking and Networking.Plant then
-            for fnName, fn in pairs(Networking.Plant) do
-                print(("  Networking.Plant.%s = %s"):format(fnName, type(fn)))
-            end
-        end
-        cachePlantPositions()
-        print("Plant areas count:", #savedPlantPositions)
-        print("PlotId:", getPlotIdAttribute())
-
-        print("-- Inventory seed tools (SeedTool attr) --")
-        local names = getInventorySeedNames()
-        for _, n in ipairs(names) do print("  " .. n) end
-        if #names == 0 then print("  (KHONG co seed - inventory rong)") end
-
-        WindUI:Notify({ Title = "Plant Diagnostic", Content = "Xem F9 console", Icon = "terminal", Duration = 4 })
-    end
-})
-
-InfoTab:Button({
-    Title = "Test plant 1 lan ngay",
-    Icon  = "zap",
-    Desc  = "Lay seed dau tien trong inventory + plant 1 lan",
-    Callback = function()
-        local names = getInventorySeedNames()
-        if #names == 0 then
-            WindUI:Notify({ Title = "Test Plant", Content = "Khong co seed trong inventory!", Icon = "circle-x", Duration = 4 })
-            return
-        end
-        local seed = names[1]
-        local ok = plantOneSeed(seed)
-        WindUI:Notify({
-            Title = "Test Plant",
-            Content = ok and ("Da plant " .. seed) or "That bai - check console F9",
-            Icon = ok and "check" or "circle-x",
-            Duration = 4,
-        })
-    end
-})
-
-InfoTab:Section({ Title = "DEBUG AUTO BUY" })
-
-InfoTab:Button({
-    Title = "Chan doan Auto Buy (xem console F9)",
-    Icon  = "search",
-    Callback = function()
-        print("===================================")
-        print("[NTMT HUB] === AUTO BUY DIAGNOSTIC ===")
-        print("===================================")
-
-        print("\n[1] MODULES:")
-        print("  okNet         =", okNet, " Networking =", Networking and "OK" or "NIL")
-        print("  okSeedData    =", okSeedData, " SeedData =", SeedData and "OK" or "NIL")
-        print("  okGearData    =", okGearData, " GearShopData =", GearShopData and "OK" or "NIL")
-        print("  okPlayerState =", okPlayerState, " PlayerStateClient =", PlayerStateClient and "OK" or "NIL")
-        print("  gearReplica   =", gearReplica and "OK" or "NIL")
-
-        print("\n[2] CURRENCY:")
-        print("  Attribute Sheckles =", LocalPlayer:GetAttribute("Sheckles"))
-        if gearReplica and gearReplica.Data then
-            print("  Replica   Sheckles =", gearReplica.Data.Sheckles)
-        end
-        print("  getSheckles()      =", getSheckles())
-
-        print("\n[3] NETWORKING SHOP PATHS:")
-        if Networking then
-            print("  Networking.SeedShop   =", Networking.SeedShop)
-            print("  Networking.GearShop   =", Networking.GearShop)
-            if type(Networking.SeedShop) == "table" then
-                print("  SeedShop.PurchaseSeed =", Networking.SeedShop.PurchaseSeed)
-                for k, v in pairs(Networking.SeedShop) do
-                    print("    SeedShop." .. tostring(k), "type:", type(v))
-                end
-            end
-            if type(Networking.GearShop) == "table" then
-                print("  GearShop.PurchaseGear =", Networking.GearShop.PurchaseGear)
-                for k, v in pairs(Networking.GearShop) do
-                    print("    GearShop." .. tostring(k), "type:", type(v))
-                end
-            end
-
-            print("\n  --- ALL NETWORKING CATEGORIES ---")
-            for k, v in pairs(Networking) do
-                if type(v) == "table" then
-                    local keys = {}
-                    for k2, _ in pairs(v) do table.insert(keys, tostring(k2)) end
-                    print(("  %s -> { %s }"):format(tostring(k), table.concat(keys, ", ")))
-                else
-                    print(("  %s = %s (type %s)"):format(tostring(k), tostring(v), type(v)))
-                end
-            end
-        else
-            print("  Networking = nil, KHONG load duoc module!")
-        end
-
-        print("\n[4] STOCK VALUES:")
-        local sv = Services.ReplicatedStorage:FindFirstChild("StockValues")
-        if sv then
-            for _, shop in ipairs(sv:GetChildren()) do
-                print("  StockValues." .. shop.Name)
-                local items = shop:FindFirstChild("Items")
-                if items then
-                    local cnt = 0
-                    for _, c in ipairs(items:GetChildren()) do
-                        if c:IsA("ValueBase") then
-                            cnt = cnt + 1
-                            if cnt <= 5 then
-                                print(("    %s = %s"):format(c.Name, tostring(c.Value)))
-                            end
-                        end
-                    end
-                    print(("    ... total %d items"):format(cnt))
-                end
-            end
-        else
-            print("  StockValues KHONG TON TAI!")
-        end
-
-        print("\n[5] TEST FIRE PurchaseSeed:")
-        local stockSeeds = getStockSeeds()
-        if #stockSeeds == 0 then
-            print("  Khong co seed trong stock de test")
-        else
-            local test = stockSeeds[1]
-            print("  Test mua:", test, " Stock:", getSeedStock(test), " Cost:", getSeedCost(test))
-            if Networking and Networking.SeedShop and Networking.SeedShop.PurchaseSeed then
-                local ok, err = pcall(function()
-                    return Networking.SeedShop.PurchaseSeed:Fire(test)
-                end)
-                print("  Fire result: ok =", ok, " err/result =", err)
-            else
-                print("  KHONG co Networking.SeedShop.PurchaseSeed!")
-            end
-        end
-
-        print("\n[6] TEST FIRE PurchaseGear:")
-        local wantGear = getWantedGearNames()
-        if #wantGear == 0 then
-            print("  Khong co gear de test")
-        else
-            local test = wantGear[1]
-            print("  Test mua:", test, " Stock:", getGearStock(test), " Remaining:", getGearRemainingStock(test), " Cost:", getGearCost(test))
-            if Networking and Networking.GearShop and Networking.GearShop.PurchaseGear then
-                local before = getGearInventoryCount(test)
-                local ok, err = pcall(function()
-                    Networking.GearShop.PurchaseGear:Fire(test)
-                end)
-                task.wait(0.5)
-                local after = getGearInventoryCount(test)
-                print("  Fire ok =", ok, " err =", err)
-                print("  Inventory before/after:", before, "->", after)
-            else
-                print("  KHONG co Networking.GearShop.PurchaseGear!")
-            end
-        end
-
-        print("\n[7] SharedModules children:")
-        local sm = Services.ReplicatedStorage:FindFirstChild("SharedModules")
-        if sm then
-            for _, c in ipairs(sm:GetChildren()) do
-                print("  " .. c.Name, "(" .. c.ClassName .. ")")
-            end
-        end
-
-        print("\n[8] ClientModules children:")
-        local cm = Services.ReplicatedStorage:FindFirstChild("ClientModules")
-        if cm then
-            for _, c in ipairs(cm:GetChildren()) do
-                print("  " .. c.Name, "(" .. c.ClassName .. ")")
-            end
-        else
-            print("  ClientModules KHONG TON TAI")
-        end
-
-        print("\n===================================")
-        print("[NTMT HUB] === END DIAGNOSTIC ===")
-        print("===================================")
-
-        WindUI:Notify({
-            Title = "Diagnostic xong",
-            Content = "Mo console (F9), copy het va gui dev",
-            Icon = "terminal",
-            Duration = 6,
-        })
-    end
+InfoTab:Section({ Title = "Account" })
+InfoTab:Paragraph({
+    Title = "Roblox User",
+    Desc  = LocalPlayer.Name,
 })
 
 print(("[NTMT HUB] Đã khởi tạo trên executor: %s"):format(Executor))
