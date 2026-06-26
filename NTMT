@@ -40,15 +40,28 @@ local genv  = getgenv and getgenv() or _G
 
 local WindUI
 do
-    local ok, lib = pcall(function()
-        return loadstring(universalHttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua"))()
-    end)
-    if ok and lib then
-        WindUI = lib
-    else
-        warn("[WindUI] Failed to load dist/main.lua, using main_example.lua fallback")
-        loadstring(universalHttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/refs/heads/main/main_example.lua"))()
-        return
+    local function tryLoadWindUI(url)
+        local ok, lib = pcall(function()
+            return loadstring(universalHttpGet(url))()
+        end)
+        if ok then
+            if lib and type(lib.CreateWindow) == "function" then return lib end
+            if _G.WindUI and type(_G.WindUI.CreateWindow) == "function" then return _G.WindUI end
+            if genv.WindUI and type(genv.WindUI.CreateWindow) == "function" then return genv.WindUI end
+        end
+        return nil
+    end
+
+    WindUI = tryLoadWindUI("https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua")
+    if not WindUI then
+        warn("[WindUI] dist/main.lua failed, trying main_example.lua")
+        WindUI = tryLoadWindUI("https://raw.githubusercontent.com/Footagesus/WindUI/refs/heads/main/main_example.lua")
+    end
+    if not WindUI then
+        WindUI = (_G and _G.WindUI) or (genv and genv.WindUI)
+    end
+    if not WindUI then
+        error("[NTMT HUB] Cannot load WindUI - check executor HTTP")
     end
 end
 
@@ -161,29 +174,30 @@ local I18N = {
         return_after_steal = "Return to plot after steal burst",
     },
     Vietnamese = {
-        tab_main = "Chinh", tab_automation = "Tu dong", tab_shop = "Cua hang", tab_webhook = "Webhook", tab_settings = "Cai dat",
-        auto_harvest = "Tu thu hoach", auto_sell = "Tu ban", auto_expand = "Tu mo rong vuon",
-        auto_sprinkler = "Tu sprinkler & tuoi", anti_steal = "Chong trom", auto_mail = "Tu gui thu",
-        mail_username = "Ten nguoi nhan", mail_seed = "Hat giong", mail_seed_amount = "So luong hat",
-        mail_gear = "Do cu", mail_gear_amount = "So luong do", send_mail = "Gui thu",
-        sprinkler_rarity = "Chon sprinkler", watering_can = "Chon binh tuoi", auto_steal = "Tu trom (dem)",
-        auto_buy_pet = "Tu mua pet", auto_buy_all_pet = "Tu mua tat ca pet",
-        auto_collect_rg = "Tu nhat Rainbow/Gold", auto_collect_drop = "Tu nhat item drop",
-        auto_shovel = "Tu xeng", auto_plant = "Tu trong", auto_plant_all = "Trong het hat",
-        plant_seed = "Hat trong", auto_buy_seed = "Tu mua hat", auto_buy_all_seed = "Tu mua tat ca hat",
-        auto_buy_gear = "Tu mua gear", auto_buy_all_gear = "Tu mua tat ca gear",
-        seed_shop_live = "Cua hang hat (live)", gear_shop_live = "Cua hang gear (live)",
-        job_id = "Job ID", join_server = "Vao server", rejoin_server = "Vao lai server",
-        hop_server = "Nhay server", copy_job_id = "Copy Job ID",
-        webhook_url = "Webhook URL", auto_notification = "Tu thong bao", notify_minutes = "Chu ky (phut)",
-        test_webhook = "Test webhook", select_pet_find = "Chon pet tim", auto_find_pet = "Tu tim pet",
-        scan_server = "Quet server ngay", hop_find_pet = "Nhay server khac",
-        discord_link = "Discord", executor_label = "Executor", roblox_user = "Roblox User",
-        redeem_code = "Nhap code (TEAMGREENBEAN)", anti_afk = "Chong AFK",
-        walk_speed = "Toc do di", jump_power = "Luc nhay", language = "Ngon ngu", translate = "Dich",
-        enabled = "Da bat", disabled = "Da tat", select_pet = "Chon pet", select_seed = "Chon hat",
-        select_gear = "Chon gear", buy_all_seeds = "Mua tat ca hat", buy_all_gears = "Mua tat ca gear",
-        return_after_steal = "Ve plot sau dot trom",
+        tab_main = "Chính", tab_automation = "Tự động", tab_shop = "Cửa hàng", tab_webhook = "Webhook", tab_settings = "Cài đặt",
+        auto_harvest = "Tự thu hoạch", auto_sell = "Tự bán", auto_expand = "Tự mở rộng vườn",
+        auto_sprinkler = "Tự sprinkler & tưới", anti_steal = "Chống trộm", auto_mail = "Tự gửi thư",
+        auto_steal = "Tự trộm (đêm)",
+        mail_username = "Tên người nhận", mail_seed = "Hạt giống", mail_seed_amount = "Số lượng hạt",
+        mail_gear = "Đồ gear", mail_gear_amount = "Số lượng gear", send_mail = "Gửi thư",
+        sprinkler_rarity = "Chọn sprinkler", watering_can = "Chọn bình tưới",
+        auto_buy_pet = "Tự mua pet", auto_buy_all_pet = "Tự mua tất cả pet",
+        auto_collect_rg = "Tự nhặt Rainbow/Gold", auto_collect_drop = "Tự nhặt item rơi",
+        auto_shovel = "Tự xẻng", auto_plant = "Tự trồng", auto_plant_all = "Trồng hết hạt",
+        plant_seed = "Hạt trồng", auto_buy_seed = "Tự mua hạt", auto_buy_all_seed = "Tự mua tất cả hạt",
+        auto_buy_gear = "Tự mua gear", auto_buy_all_gear = "Tự mua tất cả gear",
+        seed_shop_live = "Cửa hàng hạt (live)", gear_shop_live = "Cửa hàng gear (live)",
+        job_id = "Job ID", join_server = "Vào server", rejoin_server = "Vào lại server",
+        hop_server = "Nhảy server", copy_job_id = "Copy Job ID",
+        webhook_url = "Webhook URL", auto_notification = "Tự thông báo", notify_minutes = "Chu kỳ (phút)",
+        test_webhook = "Test webhook", select_pet_find = "Chọn pet cần tìm", auto_find_pet = "Tự tìm pet",
+        scan_server = "Quét server ngay", hop_find_pet = "Nhảy server khác",
+        discord_link = "Discord", executor_label = "Executor", roblox_user = "Tài khoản Roblox",
+        redeem_code = "Nhập code (TEAMGREENBEAN)", anti_afk = "Chống AFK",
+        walk_speed = "Tốc độ đi", jump_power = "Lực nhảy", language = "Ngôn ngữ", translate = "Dịch",
+        enabled = "Đã bật", disabled = "Đã tắt", select_pet = "Chọn pet", select_seed = "Chọn hạt",
+        select_gear = "Chọn gear", buy_all_seeds = "Mua tất cả hạt", buy_all_gears = "Mua tất cả gear",
+        return_after_steal = "Về plot sau đợt trộm",
     },
     Spanish = {
         tab_main = "Principal", tab_automation = "Automatizacion", tab_shop = "Tienda", tab_webhook = "Webhook", tab_settings = "Ajustes",
@@ -449,15 +463,19 @@ end
 local function applyTranslations()
     for _, entry in ipairs(UIRegistry) do
         local el, key, kind = entry.el, entry.key, entry.kind
-        if not el then continue end
-        local text = tr(key)
-        if kind == "desc" then
-            setUIElementText(el, text)
-            pcall(function()
-                if type(el.SetDesc) == "function" then el:SetDesc(text) end
-            end)
+        if not el then
+            -- skip
         else
-            setUIElementText(el, text)
+            local text = tr(key)
+            if kind == "desc" then
+                pcall(function()
+                    if type(el.SetDesc) == "function" then el:SetDesc(text) end
+                end)
+            elseif kind == "tab" then
+                setUIElementText(el, text)
+            else
+                setUIElementText(el, text)
+            end
         end
     end
     pcall(function()
@@ -466,6 +484,8 @@ local function applyTranslations()
         end
     end)
 end
+
+local Window = nil
 
 ------------------------------------------------------------
 -- 5) STATE
@@ -916,7 +936,14 @@ local PET_NAMES = buildPetNameList()
 
 if not table.find(GEAR_NAMES, mailGearName) then mailGearName = GEAR_NAMES[1] or "Common Watering Can" end
 
-plantAllOrder = table.clone(SEED_NAMES)
+local function cloneList(list)
+    if table.clone then return table.clone(list) end
+    local out = {}
+    for i, v in ipairs(list) do out[i] = v end
+    return out
+end
+
+plantAllOrder = cloneList(SEED_NAMES)
 
 local function normalizePetName(name)
     return norm(name):gsub("%s+", "")
@@ -1259,6 +1286,7 @@ local function isNightTime()
 end
 
 local function plotUnlocked(player)
+    if not Gardens then return true end
     local plot = nil
     for _, p in ipairs(Gardens:GetChildren()) do
         if p:GetAttribute("OwnerUserId") == player.UserId then plot = p break end
@@ -1316,30 +1344,33 @@ local function isPlotStealable(plot)
 end
 
 local function getMostValuableSteal()
+    if not Gardens then return nil, nil end
     local bestValue, bestItem = 0, nil
     for _, plot in ipairs(Gardens:GetChildren()) do
-        if not isPlotStealable(plot) then continue end
-        local plants = plot:FindFirstChild("Plants")
-        if not plants then continue end
-        for _, plant in ipairs(plants:GetChildren()) do
-            local fruits = plant:FindFirstChild("Fruits")
-            local candidates = {}
-            if fruits then
-                for _, fr in ipairs(fruits:GetChildren()) do
-                    local hp = fr:FindFirstChild("HarvestPart")
-                    if hp and hp:FindFirstChild("StealPrompt") then
-                        table.insert(candidates, fr)
+        if isPlotStealable(plot) then
+            local plants = plot:FindFirstChild("Plants")
+            if plants then
+                for _, plant in ipairs(plants:GetChildren()) do
+                    local fruits = plant:FindFirstChild("Fruits")
+                    local candidates = {}
+                    if fruits then
+                        for _, fr in ipairs(fruits:GetChildren()) do
+                            local hp = fr:FindFirstChild("HarvestPart")
+                            if hp and hp:FindFirstChild("StealPrompt") then
+                                table.insert(candidates, fr)
+                            end
+                        end
+                    else
+                        local hp = plant:FindFirstChild("HarvestPart")
+                        if hp and hp:FindFirstChild("StealPrompt") then
+                            table.insert(candidates, plant)
+                        end
+                    end
+                    for _, c in ipairs(candidates) do
+                        local v = calculateValue(c)
+                        if v > bestValue then bestValue, bestItem = v, c end
                     end
                 end
-            else
-                local hp = plant:FindFirstChild("HarvestPart")
-                if hp and hp:FindFirstChild("StealPrompt") then
-                    table.insert(candidates, plant)
-                end
-            end
-            for _, c in ipairs(candidates) do
-                local v = calculateValue(c)
-                if v > bestValue then bestValue, bestItem = v, c end
             end
         end
     end
@@ -1577,15 +1608,16 @@ local function scanWildPetsForTarget(targetName, forTame)
     for _, model in ipairs(collectWildPetModels()) do
         local species = model:GetAttribute("PetName")
         local size = model:GetAttribute("PetSize")
-        if type(species) ~= "string" or species == "" then continue end
-        if matchesPetTarget(species, size, targetName) then
-            local ref = resolveRefPartFromModel(model)
-            if forTame then
-                if ref and isRefTameable(ref) then
-                    table.insert(candidates, { ref = ref, model = model, price = ref:GetAttribute("Price") or 0 })
+        if type(species) == "string" and species ~= "" then
+            if matchesPetTarget(species, size, targetName) then
+                local ref = resolveRefPartFromModel(model)
+                if forTame then
+                    if ref and isRefTameable(ref) then
+                        table.insert(candidates, { ref = ref, model = model, price = ref:GetAttribute("Price") or 0 })
+                    end
+                else
+                    return { ref = ref, model = model, price = ref and ref:GetAttribute("Price") or 0 }
                 end
-            else
-                return { ref = ref, model = model, price = ref and ref:GetAttribute("Price") or 0 }
             end
         end
     end
@@ -1603,7 +1635,7 @@ local function verifyPetOnServer(petName)
         if hit and hit.model and hit.model.Parent then
             local species = hit.model:GetAttribute("PetName")
             if species and matchesPetTarget(species, hit.model:GetAttribute("PetSize"), petName) then
-                hits += 1
+                hits = hits + 1
             end
         end
         task.wait(0.35)
@@ -1690,11 +1722,12 @@ local function tryBuyAllPets()
     for _, model in ipairs(collectWildPetModels()) do
         if not genv.ftgs_AutoBuyAllPet then return end
         local species = model:GetAttribute("PetName")
-        if type(species) ~= "string" then continue end
-        local ref = resolveRefPartFromModel(model)
-        if ref and isRefTameable(ref) then
-            catchWildPetRef({ ref = ref, model = model }, 8)
-            return
+        if type(species) == "string" then
+            local ref = resolveRefPartFromModel(model)
+            if ref and isRefTameable(ref) then
+                catchWildPetRef({ ref = ref, model = model }, 8)
+                return
+            end
         end
     end
 end
@@ -1714,22 +1747,21 @@ local function tryShovelLowest()
         local pid = plant:GetAttribute("PlantId")
         if pid then
             local seedName = plant:GetAttribute("SeedName") or plant:GetAttribute("PlantName") or ""
-            if next(ShovelWhitelist) ~= nil and not ShovelWhitelist[seedName] then
-                continue
-            end
-            local mutation = plant:GetAttribute("Mutation") or "Normal"
-            local rank = 1
-            if mutation == "Gold" then rank = 2
-            elseif mutation == "Rainbow" then rank = 3 end
-            if seedName ~= "" then
-                local sd = getSeedData(seedName)
-                local rarity = sd and sd.Rarity or "Common"
-                local rarityRank = ({ Secret = 1, Super = 2, Mythic = 3, Legendary = 4, Epic = 5, Rare = 6, Uncommon = 7, Common = 8 })[rarity] or 99
-                rank = rank + rarityRank * 10
-            end
-            if rank < lowestRank then
-                lowestRank = rank
-                targetId = pid
+            if next(ShovelWhitelist) == nil or ShovelWhitelist[seedName] then
+                local mutation = plant:GetAttribute("Mutation") or "Normal"
+                local rank = 1
+                if mutation == "Gold" then rank = 2
+                elseif mutation == "Rainbow" then rank = 3 end
+                if seedName ~= "" then
+                    local sd = getSeedData(seedName)
+                    local rarity = sd and sd.Rarity or "Common"
+                    local rarityRank = ({ Secret = 1, Super = 2, Mythic = 3, Legendary = 4, Epic = 5, Rare = 6, Uncommon = 7, Common = 8 })[rarity] or 99
+                    rank = rank + rarityRank * 10
+                end
+                if rank < lowestRank then
+                    lowestRank = rank
+                    targetId = pid
+                end
             end
         end
     end
@@ -2152,7 +2184,9 @@ end)
 -- 7) WINDOW & TABS
 ------------------------------------------------------------
 
-local Window = WindUI:CreateWindow({
+local guiOk, guiErr = pcall(function()
+
+Window = WindUI:CreateWindow({
     Title  = "NTMT HUB | Grow a Garden 2",
     Author = "Executor: " .. Executor,
     Folder = "ntmthub",
@@ -2471,11 +2505,15 @@ pcall(function()
 end)
 
 makeSection(ShopTab, "seed_shop_live")
-local seedShopLive = ShopTab:Paragraph({ Title = tr("seed_shop_live"), Desc = buildSeedShopText() })
+local seedShopDesc = "Loading..."
+pcall(function() seedShopDesc = buildSeedShopText() end)
+local seedShopLive = ShopTab:Paragraph({ Title = tr("seed_shop_live"), Desc = seedShopDesc })
 registerUI(seedShopLive, "seed_shop_live", "title")
 
 makeSection(ShopTab, "gear_shop_live")
-local gearShopLive = ShopTab:Paragraph({ Title = tr("gear_shop_live"), Desc = buildGearShopText() })
+local gearShopDesc = "Loading..."
+pcall(function() gearShopDesc = buildGearShopText() end)
+local gearShopLive = ShopTab:Paragraph({ Title = tr("gear_shop_live"), Desc = gearShopDesc })
 registerUI(gearShopLive, "gear_shop_live", "title")
 
 task.spawn(function()
@@ -2637,6 +2675,21 @@ makeButton(SettingsTab, "translate", "languages", function()
     applyTranslations()
     notify(tr("translate"), currentLang, "check", 2)
 end)
+
+end) -- guiOk pcall
+
+if not guiOk then
+    warn("[NTMT HUB] GUI failed:", guiErr)
+    pcall(function()
+        if WindUI and type(WindUI.Notify) == "function" then
+            WindUI:Notify({
+                Title = "NTMT HUB",
+                Content = "GUI error: " .. tostring(guiErr),
+                Duration = 10,
+            })
+        end
+    end)
+end
 
 ------------------------------------------------------------
 -- 8) MAIN LOOPS
@@ -2869,7 +2922,7 @@ task.spawn(function()
         if not table.find(SEED_NAMES, name) then table.insert(SEED_NAMES, name) end
     end
     table.sort(SEED_NAMES)
-    plantAllOrder = table.clone(SEED_NAMES)
+    plantAllOrder = cloneList(SEED_NAMES)
 end)
 
 print(("[NTMT HUB] Loaded on executor: %s"):format(Executor))
