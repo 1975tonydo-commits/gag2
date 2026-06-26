@@ -1,39 +1,41 @@
---[[
-    NTMT HUB - Grow a Garden 2
-    Supports: Delta X, Codex, Hydrogen, Arceus X, Fluxus, Synapse X, Krnl, Wave,
-              VegaX, Solara, Xeno, Velocity, Electron, Trigon, JJsploit, ...
-    Platforms: iOS / Android / PC / VNG / Mac
-]]
+-- NTMT HUB | Grow a Garden 2
+local __NTMT_OK, __NTMT_ERR = pcall(function()
 
-print("[NTMT HUB] Starting...")
-
-------------------------------------------------------------
--- 1) UNIVERSAL EXECUTOR COMPATIBILITY LAYER
-------------------------------------------------------------
-
-local LOAD = loadstring or load
-if type(LOAD) ~= "function" then
-    error("[NTMT HUB] Executor thieu loadstring/load - khong the chay script")
-end
-
-local function safeGetEnv()
+local function getGlobal(name)
+    local v = rawget(_G, name)
+    if v ~= nil then return v end
     if type(getgenv) == "function" then
         local ok, env = pcall(getgenv)
-        if ok and type(env) == "table" then return env end
+        if ok and type(env) == "table" then
+            v = rawget(env, name)
+            if v ~= nil then return v end
+        end
     end
-    return _G
+    if type(getrenv) == "function" then
+        local ok, env = pcall(getrenv)
+        if ok and type(env) == "table" then
+            v = rawget(env, name)
+            if v ~= nil then return v end
+        end
+    end
+    return nil
 end
 
+local LOAD = getGlobal("loadstring") or getGlobal("load")
 local Executor = "Unknown"
-if type(identifyexecutor) == "function" then
-    local ok, name = pcall(identifyexecutor)
+if type(getGlobal("identifyexecutor")) == "function" then
+    local ok, name = pcall(getGlobal("identifyexecutor"))
     if ok and name then Executor = tostring(name) end
-elseif type(getexecutorname) == "function" then
-    local ok, name = pcall(getexecutorname)
+elseif type(getGlobal("getexecutorname")) == "function" then
+    local ok, name = pcall(getGlobal("getexecutorname"))
     if ok and name then Executor = tostring(name) end
 end
 
-local cloneref = cloneref or clonereference or function(o) return o end
+local cloneref = getGlobal("cloneref") or getGlobal("clonereference") or function(o) return o end
+
+local function clearTable(t)
+    if table.clear then table.clear(t) else for k in pairs(t) do t[k] = nil end end
+end
 
 local function hexColor(hex)
     if Color3.fromHex then
@@ -50,39 +52,236 @@ local function hexColor(hex)
 end
 
 local function universalHttpGet(url)
-    local ok, body = pcall(function()
-        return game:HttpGet(url)
-    end)
-    if ok and type(body) == "string" and #body > 50 and not body:find("404") then return body end
-
-    local req = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
+    local function good(body)
+        return type(body) == "string" and #body > 100 and not body:find("404: Not Found", 1, true)
+    end
+    local ok, body = pcall(function() return game:HttpGet(url, true) end)
+    if ok and good(body) then return body end
+    ok, body = pcall(function() return game:HttpGet(url) end)
+    if ok and good(body) then return body end
+    local hg = getGlobal("httpget") or getGlobal("HttpGet")
+    if type(hg) == "function" then
+        ok, body = pcall(hg, url)
+        if ok and good(body) then return body end
+    end
+    local req = getGlobal("request") or getGlobal("http_request")
+        or (type(syn) == "table" and syn.request)
+        or (type(http) == "table" and http.request)
+        or (type(fluxus) == "table" and fluxus.request)
     if req then
-        local res = req({ Url = url, Method = "GET" })
-        if res and type(res.Body or res.body) == "string" then
-            body = res.Body or res.body
-            if #body > 50 and not body:find("404") then return body end
-        end
+        ok, body = pcall(req, { Url = url, Method = "GET" })
+        if ok and type(body) == "table" then body = body.Body or body.body end
+        if good(body) then return body end
     end
     return nil
 end
 
 local function runLuaSource(source, label)
-    if type(source) ~= "string" or #source < 50 then
-        return nil, "empty source"
-    end
+    if type(LOAD) ~= "function" then return nil, "no loadstring" end
+    if type(source) ~= "string" or #source < 100 then return nil, "bad source" end
     local fn, compileErr = LOAD(source, label or "@ntmt")
-    if not fn then
-        return nil, compileErr or "compile failed"
-    end
+    if not fn then return nil, compileErr end
     local ok, result = pcall(fn)
-    if not ok then
-        return nil, result
-    end
+    if not ok then return nil, result end
     return result
 end
 
-local hasFs = (writefile and readfile and isfile) ~= nil
-local genv  = safeGetEnv()
+local function buildFallbackWindUI()
+    local API = { Version = "fallback" }
+    function API:Notify(o)
+        o = o or {}
+        pcall(function()
+            game:GetService("StarterGui"):SetCore("SendNotification", {
+                Title = tostring(o.Title or "NTMT HUB"),
+                Text = tostring(o.Content or ""),
+                Duration = tonumber(o.Duration) or 3,
+            })
+        end)
+    end
+    function API.CreateWindow(_, cfg)
+        cfg = cfg or {}
+        local pg = game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui", 15)
+        local sg = Instance.new("ScreenGui")
+        sg.Name = "NTMTHubUI"
+        sg.ResetOnSpawn = false
+        sg.Parent = pg
+        local open = Instance.new("TextButton")
+        open.Size = UDim2.fromOffset(150, 46)
+        open.Position = UDim2.new(0, 10, 0.5, -23)
+        open.BackgroundColor3 = Color3.fromRGB(48, 200, 80)
+        open.TextColor3 = Color3.new(1, 1, 1)
+        open.Font = Enum.Font.GothamBold
+        open.TextSize = 14
+        open.Text = (cfg.OpenButton and cfg.OpenButton.Title) or "Open NTMT HUB"
+        open.Parent = sg
+        local panel = Instance.new("Frame")
+        panel.Size = UDim2.fromOffset(430, 540)
+        panel.Position = UDim2.new(0.5, -215, 0.5, -270)
+        panel.BackgroundColor3 = Color3.fromRGB(22, 22, 28)
+        panel.Visible = false
+        panel.Parent = sg
+        local scroll = Instance.new("ScrollingFrame")
+        scroll.Size = UDim2.new(1, -6, 1, -6)
+        scroll.Position = UDim2.new(0, 3, 0, 3)
+        scroll.BackgroundTransparency = 1
+        scroll.ScrollBarThickness = 6
+        scroll.CanvasSize = UDim2.new()
+        scroll.Parent = panel
+        local layout = Instance.new("UIListLayout")
+        layout.Padding = UDim.new(0, 4)
+        layout.Parent = scroll
+        layout:GetPropertyChangedSignal("AbsoluteContentSize"):Connect(function()
+            scroll.CanvasSize = UDim2.new(0, 0, 0, layout.AbsoluteContentSize.Y + 10)
+        end)
+        open.MouseButton1Click:Connect(function() panel.Visible = not panel.Visible end)
+        local win = {}
+        function win.Tag() end
+        local function bindEl(obj)
+            return {
+                SetTitle = function(_, t) if obj then obj.Text = tostring(t) end end,
+                SetDesc = function() end,
+                Update = function(_, u) if u and u.Title and obj then obj.Text = u.Title end end,
+            }
+        end
+        function win.Tab(_, tabCfg)
+            local tab = {}
+            local hdr = Instance.new("TextLabel")
+            hdr.Size = UDim2.new(1, -8, 0, 26)
+            hdr.BackgroundTransparency = 1
+            hdr.TextColor3 = Color3.fromRGB(120, 220, 140)
+            hdr.Font = Enum.Font.GothamBold
+            hdr.TextSize = 15
+            hdr.Text = "-- " .. (tabCfg.Title or "Tab") .. " --"
+            hdr.Parent = scroll
+            function tab.Section(_, s)
+                local l = Instance.new("TextLabel")
+                l.Size = UDim2.new(1, -8, 0, 20)
+                l.BackgroundTransparency = 1
+                l.TextColor3 = Color3.fromRGB(170, 170, 170)
+                l.Text = s.Title or ""
+                l.Parent = scroll
+                return bindEl(l)
+            end
+            function tab.Toggle(_, o)
+                local on = o.Default == true
+                local b = Instance.new("TextButton")
+                b.Size = UDim2.new(1, -8, 0, 30)
+                b.Font = Enum.Font.Gotham
+                b.TextSize = 13
+                b.Parent = scroll
+                local function paint()
+                    b.Text = (o.Title or "Toggle") .. (on and " [ON]" or " [OFF]")
+                    b.BackgroundColor3 = on and Color3.fromRGB(34, 120, 62) or Color3.fromRGB(55, 55, 62)
+                    b.TextColor3 = Color3.new(1, 1, 1)
+                end
+                paint()
+                b.MouseButton1Click:Connect(function()
+                    on = not on
+                    paint()
+                    if o.Callback then pcall(o.Callback, on) end
+                end)
+                local el = bindEl(b)
+                function el.SetTitle(_, t) o.Title = t paint() end
+                return el
+            end
+            function tab.Button(_, o)
+                local b = Instance.new("TextButton")
+                b.Size = UDim2.new(1, -8, 0, 30)
+                b.Text = o.Title or "Button"
+                b.BackgroundColor3 = Color3.fromRGB(70, 70, 90)
+                b.TextColor3 = Color3.new(1, 1, 1)
+                b.Parent = scroll
+                b.MouseButton1Click:Connect(function() if o.Callback then pcall(o.Callback) end end)
+                return bindEl(b)
+            end
+            function tab.Slider(_, o)
+                local val = (o.Value and o.Value.Default) or 16
+                local l = Instance.new("TextLabel")
+                l.Size = UDim2.new(1, -8, 0, 30)
+                l.BackgroundColor3 = Color3.fromRGB(45, 45, 55)
+                l.TextColor3 = Color3.new(1, 1, 1)
+                l.Parent = scroll
+                local function upd()
+                    l.Text = (o.Title or "Slider") .. ": " .. tostring(math.floor(val))
+                end
+                upd()
+                l.MouseButton1Click:Connect(function()
+                    val = val + (o.Step or 1)
+                    local mx = (o.Value and o.Value.Max) or 250
+                    local mn = (o.Value and o.Value.Min) or 16
+                    if val > mx then val = mn end
+                    upd()
+                    if o.Callback then pcall(o.Callback, val) end
+                end)
+                return bindEl(l)
+            end
+            function tab.Input(_, o)
+                local box = Instance.new("TextBox")
+                box.Size = UDim2.new(1, -8, 0, 30)
+                box.BackgroundColor3 = Color3.fromRGB(40, 40, 48)
+                box.TextColor3 = Color3.new(1, 1, 1)
+                box.Text = o.Value or ""
+                box.PlaceholderText = o.Placeholder or ""
+                box.Parent = scroll
+                box.FocusLost:Connect(function(enter)
+                    if enter and o.Callback then pcall(o.Callback, box.Text) end
+                end)
+                return bindEl(box)
+            end
+            function tab.Paragraph(_, o)
+                local l = Instance.new("TextLabel")
+                l.Size = UDim2.new(1, -8, 0, 50)
+                l.TextWrapped = true
+                l.TextXAlignment = Enum.TextXAlignment.Left
+                l.TextYAlignment = Enum.TextYAlignment.Top
+                l.BackgroundTransparency = 1
+                l.TextColor3 = Color3.new(0.9, 0.9, 0.9)
+                l.Text = (o.Title or "") .. "\n" .. (o.Desc or "")
+                l.Parent = scroll
+                local el = bindEl(l)
+                function el.SetDesc(_, d) l.Text = (o.Title or "") .. "\n" .. tostring(d or "") end
+                return el
+            end
+            function tab.Dropdown(_, o)
+                local idx = 1
+                local vals = o.Values or {}
+                local b = Instance.new("TextButton")
+                b.Size = UDim2.new(1, -8, 0, 30)
+                b.BackgroundColor3 = Color3.fromRGB(55, 55, 70)
+                b.TextColor3 = Color3.new(1, 1, 1)
+                b.Parent = scroll
+                local function paint()
+                    b.Text = (o.Title or "Select") .. ": " .. tostring(vals[idx] or "None")
+                end
+                paint()
+                b.MouseButton1Click:Connect(function()
+                    if #vals == 0 then return end
+                    idx = idx + 1
+                    if idx > #vals then idx = 1 end
+                    paint()
+                    if o.Callback then
+                        if o.Multi then pcall(o.Callback, { [vals[idx]] = true })
+                        else pcall(o.Callback, vals[idx]) end
+                    end
+                end)
+                return bindEl(b)
+            end
+            function tab.SetTitle(_, t) hdr.Text = "-- " .. t .. " --" end
+            return tab
+        end
+        return win
+    end
+    return API
+end
+
+print("[NTMT HUB] Starting... | Executor:", Executor)
+
+local hasFs = (getGlobal("writefile") and getGlobal("readfile") and getGlobal("isfile")) ~= nil
+local genv = _G
+if type(getgenv) == "function" then
+    local ok, env = pcall(getgenv)
+    if ok and type(env) == "table" then genv = env end
+end
 
 ------------------------------------------------------------
 -- 2) LOAD WINDUI
@@ -96,33 +295,33 @@ do
         if genv.WindUI and type(genv.WindUI.CreateWindow) == "function" then return genv.WindUI end
         return nil
     end
-
-    local WINDUI_URLS = {
+    local urls = {
         "https://raw.githubusercontent.com/Footagesus/WindUI/main/dist/main.lua",
         "https://raw.githubusercontent.com/Footagesus/WindUI/refs/heads/main/dist/main.lua",
     }
-
-    for _, url in ipairs(WINDUI_URLS) do
+    for _, url in ipairs(urls) do
         local source = universalHttpGet(url)
         if source then
             local lib, err = runLuaSource(source, "@WindUI")
             WindUI = pickWindUI(lib)
             if WindUI then break end
-            warn("[WindUI] Load failed from", url, err)
+            warn("[WindUI] fail:", err)
         else
-            warn("[WindUI] HTTP failed:", url)
+            warn("[WindUI] HTTP fail:", url)
         end
     end
-
     if not WindUI then
-        error("[NTMT HUB] Khong tai duoc WindUI - bat HttpGet tren executor hoac thu lai")
+        warn("[NTMT HUB] WindUI khong load duoc -> UI fallback")
+        WindUI = buildFallbackWindUI()
     end
-
     genv.WindUI = WindUI
     _G.WindUI = WindUI
-    print("[NTMT HUB] WindUI OK v" .. tostring(WindUI.Version or "?"))
+    print("[NTMT HUB] WindUI ready v" .. tostring(WindUI.Version or "?"))
 end
 
+------------------------------------------------------------
+-- 3) SERVICES & GAME MODULES
+------------------------------------------------------------
 ------------------------------------------------------------
 -- 3) SERVICES & GAME MODULES
 ------------------------------------------------------------
@@ -257,240 +456,7 @@ local I18N = {
         select_gear = "Chọn gear", buy_all_seeds = "Mua tất cả hạt", buy_all_gears = "Mua tất cả gear",
         return_after_steal = "Về plot sau đợt trộm",
     },
-    Spanish = {
-        tab_main = "Principal", tab_automation = "Automatizacion", tab_shop = "Tienda", tab_webhook = "Webhook", tab_settings = "Ajustes",
-        auto_harvest = "Auto Cosecha", auto_sell = "Auto Vender", auto_expand = "Auto Expandir Jardin",
-        auto_sprinkler = "Auto Aspersor y Agua", anti_steal = "Anti-Robo", auto_mail = "Auto Correo",
-        mail_username = "Usuario correo", mail_seed = "Semilla", mail_seed_amount = "Cantidad semilla",
-        mail_gear = "Equipo", mail_gear_amount = "Cantidad equipo", send_mail = "Enviar correo",
-        sprinkler_rarity = "Rareza aspersor", auto_steal = "Auto Robar (noche)",
-        auto_buy_pet = "Auto Comprar Mascota", auto_buy_all_pet = "Auto Comprar Todas",
-        auto_collect_rg = "Auto Recoger Rainbow/Gold", auto_collect_drop = "Auto Recoger Drop",
-        auto_shovel = "Auto Pala", auto_plant = "Auto Plantar", auto_plant_all = "Plantar Todas Semillas",
-        plant_seed = "Semilla", auto_buy_seed = "Auto Comprar Semilla", auto_buy_all_seed = "Auto Comprar Todas",
-        auto_buy_gear = "Auto Comprar Equipo", auto_buy_all_gear = "Auto Comprar Todo Equipo",
-        seed_shop_live = "Tienda Semillas (live)", gear_shop_live = "Tienda Equipo (live)",
-        job_id = "Job ID", join_server = "Unirse", rejoin_server = "Reunirse", hop_server = "Saltar server",
-        copy_job_id = "Copiar Job ID", webhook_url = "Webhook URL", auto_notification = "Auto Notificacion",
-        notify_minutes = "Intervalo (minutos)", test_webhook = "Probar Webhook",
-        select_pet_find = "Mascota a buscar", auto_find_pet = "Auto Buscar Mascota",
-        scan_server = "Escanear ahora", hop_find_pet = "Saltar otro server",
-        discord_link = "Discord", executor_label = "Executor", roblox_user = "Usuario Roblox",
-        redeem_code = "Canjear (TEAMGREENBEAN)", anti_afk = "Anti-AFK", walk_speed = "Velocidad",
-        jump_power = "Salto", language = "Idioma", translate = "Traducir",
-        enabled = "Activado", disabled = "Desactivado", select_pet = "Elegir mascota",
-        select_seed = "Elegir semilla", select_gear = "Elegir equipo",
-        buy_all_seeds = "Comprar todas semillas", buy_all_gears = "Comprar todo equipo",
-        return_after_steal = "Volver al plot tras robo",
-    },
-    French = {
-        tab_main = "Principal", tab_automation = "Automatisation", tab_shop = "Boutique", tab_webhook = "Webhook", tab_settings = "Parametres",
-        auto_harvest = "Auto Recolte", auto_sell = "Auto Vente", auto_expand = "Auto Agrandir",
-        auto_sprinkler = "Auto Arrosage", anti_steal = "Anti-Vol", auto_mail = "Auto Courrier",
-        mail_username = "Nom destinataire", mail_seed = "Graine", mail_seed_amount = "Quantite graine",
-        mail_gear = "Equipement", mail_gear_amount = "Quantite equipement", send_mail = "Envoyer courrier",
-        sprinkler_rarity = "Rarete arroseur", auto_steal = "Auto Vol (nuit)",
-        auto_buy_pet = "Auto Acheter Pet", auto_buy_all_pet = "Auto Acheter Tous",
-        auto_collect_rg = "Auto Rainbow/Gold", auto_collect_drop = "Auto Collecter Drop",
-        auto_shovel = "Auto Pelle", auto_plant = "Auto Planter", auto_plant_all = "Planter Toutes Graines",
-        plant_seed = "Graine", auto_buy_seed = "Auto Acheter Graine", auto_buy_all_seed = "Auto Toutes Graines",
-        auto_buy_gear = "Auto Acheter Equipement", auto_buy_all_gear = "Auto Tout Equipement",
-        seed_shop_live = "Boutique Graines (live)", gear_shop_live = "Boutique Equipement (live)",
-        job_id = "Job ID", join_server = "Rejoindre", rejoin_server = "Re-rejoindre", hop_server = "Changer serveur",
-        copy_job_id = "Copier Job ID", webhook_url = "URL Webhook", auto_notification = "Auto Notification",
-        notify_minutes = "Intervalle (minutes)", test_webhook = "Tester Webhook",
-        select_pet_find = "Pet a trouver", auto_find_pet = "Auto Trouver Pet",
-        scan_server = "Scanner maintenant", hop_find_pet = "Hop autre serveur",
-        discord_link = "Discord", executor_label = "Executor", roblox_user = "Utilisateur Roblox",
-        redeem_code = "Code (TEAMGREENBEAN)", anti_afk = "Anti-AFK", walk_speed = "Vitesse",
-        jump_power = "Saut", language = "Langue", translate = "Traduire",
-        enabled = "Active", disabled = "Desactive", select_pet = "Choisir pet",
-        select_seed = "Choisir graine", select_gear = "Choisir equipement",
-        buy_all_seeds = "Acheter toutes graines", buy_all_gears = "Acheter tout equipement",
-        return_after_steal = "Retour plot apres vol",
-    },
-    German = {
-        tab_main = "Haupt", tab_automation = "Automatisierung", tab_shop = "Shop", tab_webhook = "Webhook", tab_settings = "Einstellungen",
-        auto_harvest = "Auto Ernten", auto_sell = "Auto Verkaufen", auto_expand = "Auto Erweitern",
-        auto_sprinkler = "Auto Sprinkler & Wasser", anti_steal = "Anti-Diebstahl", auto_mail = "Auto Mail",
-        mail_username = "Mail Benutzer", mail_seed = "Samen", mail_seed_amount = "Samen Menge",
-        mail_gear = "Ausrustung", mail_gear_amount = "Ausrustung Menge", send_mail = "Mail senden",
-        sprinkler_rarity = "Sprinkler Seltenheit", auto_steal = "Auto Stehlen (Nacht)",
-        auto_buy_pet = "Auto Pet kaufen", auto_buy_all_pet = "Alle Pets kaufen",
-        auto_collect_rg = "Auto Rainbow/Gold", auto_collect_drop = "Auto Drop sammeln",
-        auto_shovel = "Auto Schaufel", auto_plant = "Auto Pflanzen", auto_plant_all = "Alle Samen pflanzen",
-        plant_seed = "Samen", auto_buy_seed = "Auto Samen kaufen", auto_buy_all_seed = "Alle Samen kaufen",
-        auto_buy_gear = "Auto Gear kaufen", auto_buy_all_gear = "Alles Gear kaufen",
-        seed_shop_live = "Samen Shop (live)", gear_shop_live = "Gear Shop (live)",
-        job_id = "Job ID", join_server = "Server beitreten", rejoin_server = "Neu beitreten",
-        hop_server = "Server hop", copy_job_id = "Job ID kopieren",
-        webhook_url = "Webhook URL", auto_notification = "Auto Benachrichtigung",
-        notify_minutes = "Intervall (Minuten)", test_webhook = "Webhook testen",
-        select_pet_find = "Pet suchen", auto_find_pet = "Auto Pet finden",
-        scan_server = "Server scannen", hop_find_pet = "Anderen Server hop",
-        discord_link = "Discord", executor_label = "Executor", roblox_user = "Roblox User",
-        redeem_code = "Code (TEAMGREENBEAN)", anti_afk = "Anti-AFK", walk_speed = "Laufgeschwindigkeit",
-        jump_power = "Sprungkraft", language = "Sprache", translate = "Ubersetzen",
-        enabled = "An", disabled = "Aus", select_pet = "Pet wahlen", select_seed = "Samen wahlen",
-        select_gear = "Gear wahlen", buy_all_seeds = "Alle Samen kaufen", buy_all_gears = "Alles Gear kaufen",
-        return_after_steal = "Zuruck nach Diebstahl",
-    },
-    Portuguese = {
-        tab_main = "Principal", tab_automation = "Automacao", tab_shop = "Loja", tab_webhook = "Webhook", tab_settings = "Config",
-        auto_harvest = "Auto Colher", auto_sell = "Auto Vender", auto_expand = "Auto Expandir",
-        auto_sprinkler = "Auto Sprinkler & Agua", anti_steal = "Anti-Roubo", auto_mail = "Auto Mail",
-        mail_username = "Usuario mail", mail_seed = "Semente", mail_seed_amount = "Qtd semente",
-        mail_gear = "Equipamento", mail_gear_amount = "Qtd equipamento", send_mail = "Enviar mail",
-        sprinkler_rarity = "Raridade sprinkler", auto_steal = "Auto Roubar (noite)",
-        auto_buy_pet = "Auto Comprar Pet", auto_buy_all_pet = "Auto Comprar Todos Pets",
-        auto_collect_rg = "Auto Rainbow/Gold", auto_collect_drop = "Auto Coletar Drop",
-        auto_shovel = "Auto Pa", auto_plant = "Auto Plantar", auto_plant_all = "Plantar Todas Sementes",
-        plant_seed = "Semente", auto_buy_seed = "Auto Comprar Semente", auto_buy_all_seed = "Auto Todas Sementes",
-        auto_buy_gear = "Auto Comprar Gear", auto_buy_all_gear = "Auto Todo Gear",
-        seed_shop_live = "Loja Sementes (live)", gear_shop_live = "Loja Gear (live)",
-        job_id = "Job ID", join_server = "Entrar server", rejoin_server = "Reentrar", hop_server = "Hop server",
-        copy_job_id = "Copiar Job ID", webhook_url = "Webhook URL", auto_notification = "Auto Notificacao",
-        notify_minutes = "Intervalo (minutos)", test_webhook = "Testar Webhook",
-        select_pet_find = "Pet para achar", auto_find_pet = "Auto Achar Pet",
-        scan_server = "Escanear agora", hop_find_pet = "Hop outro server",
-        discord_link = "Discord", executor_label = "Executor", roblox_user = "Usuario Roblox",
-        redeem_code = "Codigo (TEAMGREENBEAN)", anti_afk = "Anti-AFK", walk_speed = "Velocidade",
-        jump_power = "Pulo", language = "Idioma", translate = "Traduzir",
-        enabled = "Ativado", disabled = "Desativado", select_pet = "Escolher pet",
-        select_seed = "Escolher semente", select_gear = "Escolher gear",
-        buy_all_seeds = "Comprar todas sementes", buy_all_gears = "Comprar todo gear",
-        return_after_steal = "Voltar ao plot apos roubo",
-    },
-    Russian = {
-        tab_main = "Glavnoe", tab_automation = "Avto", tab_shop = "Magazin", tab_webhook = "Webhook", tab_settings = "Nastroiki",
-        auto_harvest = "Avto Sbor", auto_sell = "Avto Prodazha", auto_expand = "Avto Rasshirenie",
-        auto_sprinkler = "Avto Poliv", anti_steal = "Anti-Kradzh", auto_mail = "Avto Pochta",
-        mail_username = "Poluchatel", mail_seed = "Semya", mail_seed_amount = "Kol-vo semyan",
-        mail_gear = "Snaryazhenie", mail_gear_amount = "Kol-vo snaryazh", send_mail = "Otpravit pochtu",
-        sprinkler_rarity = "Redkost sprinklera", auto_steal = "Avto Kradzh ( noch )",
-        auto_buy_pet = "Avto Kupit Peta", auto_buy_all_pet = "Avto Kupit Vsekh",
-        auto_collect_rg = "Avto Rainbow/Gold", auto_collect_drop = "Avto Sobirat Drop",
-        auto_shovel = "Avto Lopata", auto_plant = "Avto Sadit", auto_plant_all = "Sadit vse semena",
-        plant_seed = "Semya", auto_buy_seed = "Avto Kupit Semya", auto_buy_all_seed = "Avto Vse Semena",
-        auto_buy_gear = "Avto Kupit Snaryazh", auto_buy_all_gear = "Avto Vse Snaryazh",
-        seed_shop_live = "Magazin Semyan (live)", gear_shop_live = "Magazin Snaryazh (live)",
-        job_id = "Job ID", join_server = "Voyti", rejoin_server = "Perevoyti", hop_server = "Hop server",
-        copy_job_id = "Kopirovat Job ID", webhook_url = "Webhook URL", auto_notification = "Avto Uvedomlenie",
-        notify_minutes = "Interval (min)", test_webhook = "Test Webhook",
-        select_pet_find = "Pet dlya poiska", auto_find_pet = "Avto Poisk Peta",
-        scan_server = "Skanirovat seychas", hop_find_pet = "Hop drugoy server",
-        discord_link = "Discord", executor_label = "Executor", roblox_user = "Polzovatel Roblox",
-        redeem_code = "Kod (TEAMGREENBEAN)", anti_afk = "Anti-AFK", walk_speed = "Skorost",
-        jump_power = "Pryzhok", language = "Yazyk", translate = "Perevesti",
-        enabled = "Vklyucheno", disabled = "Vyklyucheno", select_pet = "Vybrat peta",
-        select_seed = "Vybrat semya", select_gear = "Vybrat snaryazh",
-        buy_all_seeds = "Kupit vse semena", buy_all_gears = "Kupit vse snaryazh",
-        return_after_steal = "Vernutsya posle kradzhi",
-    },
-    Chinese = {
-        tab_main = "主页", tab_automation = "自动化", tab_shop = "商店", tab_webhook = "Webhook", tab_settings = "设置",
-        auto_harvest = "自动收获", auto_sell = "自动出售", auto_expand = "自动扩展花园",
-        auto_sprinkler = "自动洒水器浇水", anti_steal = "防偷", auto_mail = "自动邮件",
-        mail_username = "邮件用户名", mail_seed = "种子", mail_seed_amount = "种子数量",
-        mail_gear = "装备", mail_gear_amount = "装备数量", send_mail = "发送邮件",
-        sprinkler_rarity = "洒水器稀有度", auto_steal = "自动偷取(夜间)",
-        auto_buy_pet = "自动买宠物", auto_buy_all_pet = "自动买全部宠物",
-        auto_collect_rg = "自动收集彩虹/金种子", auto_collect_drop = "自动收集掉落",
-        auto_shovel = "自动铲子", auto_plant = "自动种植", auto_plant_all = "种植全部种子",
-        plant_seed = "种植种子", auto_buy_seed = "自动买种子", auto_buy_all_seed = "自动买全部种子",
-        auto_buy_gear = "自动买装备", auto_buy_all_gear = "自动买全部装备",
-        seed_shop_live = "种子商店(实时)", gear_shop_live = "装备商店(实时)",
-        job_id = "Job ID", join_server = "加入服务器", rejoin_server = "重新加入", hop_server = "切换服务器",
-        copy_job_id = "复制 Job ID", webhook_url = "Webhook URL", auto_notification = "自动通知",
-        notify_minutes = "间隔(分钟)", test_webhook = "测试 Webhook",
-        select_pet_find = "选择要找的宠物", auto_find_pet = "自动找宠物",
-        scan_server = "立即扫描", hop_find_pet = "跳到其他服务器",
-        discord_link = "Discord", executor_label = "Executor", roblox_user = "Roblox 用户",
-        redeem_code = "兑换码(TEAMGREENBEAN)", anti_afk = "防挂机", walk_speed = "行走速度",
-        jump_power = "跳跃力", language = "语言", translate = "翻译",
-        enabled = "已开启", disabled = "已关闭", select_pet = "选择宠物",
-        select_seed = "选择种子", select_gear = "选择装备",
-        buy_all_seeds = "购买全部种子", buy_all_gears = "购买全部装备",
-        return_after_steal = "偷取后返回地块",
-    },
-    Japanese = {
-        tab_main = "メイン", tab_automation = "自動化", tab_shop = "ショップ", tab_webhook = "Webhook", tab_settings = "設定",
-        auto_harvest = "自動収穫", auto_sell = "自動売却", auto_expand = "自動拡張",
-        auto_sprinkler = "自動スプリンクラー", anti_steal = "防盗", auto_mail = "自動メール",
-        mail_username = "メールユーザー", mail_seed = "種", mail_seed_amount = "種の数量",
-        mail_gear = "ギア", mail_gear_amount = "ギア数量", send_mail = "メール送信",
-        sprinkler_rarity = "スプリンクラー稀有度", auto_steal = "自動盗み(夜)",
-        auto_buy_pet = "自動ペット購入", auto_buy_all_pet = "全ペット購入",
-        auto_collect_rg = "Rainbow/Gold収集", auto_collect_drop = "ドロップ収集",
-        auto_shovel = "自動シャベル", auto_plant = "自動植え", auto_plant_all = "全種植え",
-        plant_seed = "種", auto_buy_seed = "自動種購入", auto_buy_all_seed = "全種購入",
-        auto_buy_gear = "自動ギア購入", auto_buy_all_gear = "全ギア購入",
-        seed_shop_live = "種ショップ(ライブ)", gear_shop_live = "ギアショップ(ライブ)",
-        job_id = "Job ID", join_server = "参加", rejoin_server = "再参加", hop_server = "サーバー移動",
-        copy_job_id = "Job IDコピー", webhook_url = "Webhook URL", auto_notification = "自動通知",
-        notify_minutes = "間隔(分)", test_webhook = "Webhookテスト",
-        select_pet_find = "探すペット", auto_find_pet = "自動ペット探索",
-        scan_server = "今すぐスキャン", hop_find_pet = "別サーバーへ",
-        discord_link = "Discord", executor_label = "Executor", roblox_user = "Robloxユーザー",
-        redeem_code = "コード(TEAMGREENBEAN)", anti_afk = "Anti-AFK", walk_speed = "歩行速度",
-        jump_power = "ジャンプ力", language = "言語", translate = "翻訳",
-        enabled = "オン", disabled = "オフ", select_pet = "ペット選択",
-        select_seed = "種選択", select_gear = "ギア選択",
-        buy_all_seeds = "全種購入", buy_all_gears = "全ギア購入",
-        return_after_steal = "盗み後に戻る",
-    },
-    Korean = {
-        tab_main = "메인", tab_automation = "자동화", tab_shop = "상점", tab_webhook = "Webhook", tab_settings = "설정",
-        auto_harvest = "자동 수확", auto_sell = "자동 판매", auto_expand = "자동 확장",
-        auto_sprinkler = "자동 스프inkler", anti_steal = "도난 방지", auto_mail = "자동 메일",
-        mail_username = "메일 사용자", mail_seed = "씨앗", mail_seed_amount = "씨앗 수량",
-        mail_gear = "장비", mail_gear_amount = "장비 수량", send_mail = "메일 보내기",
-        sprinkler_rarity = "스프inkler 등급", auto_steal = "자동 훔치기(밤)",
-        auto_buy_pet = "자동 펫 구매", auto_buy_all_pet = "모든 펫 구매",
-        auto_collect_rg = "Rainbow/Gold 수집", auto_collect_drop = "드롭 수집",
-        auto_shovel = "자동 삽", auto_plant = "자동 심기", auto_plant_all = "모든 씨앗 심기",
-        plant_seed = "씨앗", auto_buy_seed = "자동 씨앗 구매", auto_buy_all_seed = "모든 씨앗 구매",
-        auto_buy_gear = "자동 장비 구매", auto_buy_all_gear = "모든 장비 구매",
-        seed_shop_live = "씨앗 상점(실시간)", gear_shop_live = "장비 상점(실시간)",
-        job_id = "Job ID", join_server = "서버 참가", rejoin_server = "재참가", hop_server = "서버 이동",
-        copy_job_id = "Job ID 복사", webhook_url = "Webhook URL", auto_notification = "자동 알림",
-        notify_minutes = "간격(분)", test_webhook = "Webhook 테스트",
-        select_pet_find = "찾을 펫", auto_find_pet = "자동 펫 찾기",
-        scan_server = "지금 스캔", hop_find_pet = "다른 서버로",
-        discord_link = "Discord", executor_label = "Executor", roblox_user = "Roblox 사용자",
-        redeem_code = "코드(TEAMGREENBEAN)", anti_afk = "Anti-AFK", walk_speed = "이동 속도",
-        jump_power = "점프력", language = "언어", translate = "번역",
-        enabled = "켜짐", disabled = "꺼짐", select_pet = "펫 선택",
-        select_seed = "씨앗 선택", select_gear = "장비 선택",
-        buy_all_seeds = "모든 씨앗 구매", buy_all_gears = "모든 장비 구매",
-        return_after_steal = "훔친 후 복귀",
-    },
-    Thai = {
-        tab_main = "หลัก", tab_automation = "อัตโนมัติ", tab_shop = "ร้านค้า", tab_webhook = "Webhook", tab_settings = "ตั้งค่า",
-        auto_harvest = "เก็บเกี่ยวอัตโนมัติ", auto_sell = "ขายอัตโนมัติ", auto_expand = "ขยายสวนอัตโนมัติ",
-        auto_sprinkler = "สปรinkler & รดน้ำ", anti_steal = "กันโจร", auto_mail = "ส่งเมลอัตโนมัติ",
-        mail_username = "ชื่อผู้รับ", mail_seed = "เมล็ด", mail_seed_amount = "จำนวนเมล็ด",
-        mail_gear = "อุปกรณ์", mail_gear_amount = "จำนวนอุปกรณ์", send_mail = "ส่งเมล",
-        sprinkler_rarity = "ระดับสปรinkler", auto_steal = "ขโมยอัตโนมัติ(กลางคืน)",
-        auto_buy_pet = "ซื้อสัตว์เลี้ยงอัตโนมัติ", auto_buy_all_pet = "ซื้อสัตว์เลี้ยงทั้งหมด",
-        auto_collect_rg = "เก็บ Rainbow/Gold", auto_collect_drop = "เก็บไอเทมดrop",
-        auto_shovel = "พลั่วอัตโนมัติ", auto_plant = "ปลูกอัตโนมัติ", auto_plant_all = "ปลูกเมล็ดทั้งหมด",
-        plant_seed = "เมล็ด", auto_buy_seed = "ซื้อเมล็ดอัตโนมัติ", auto_buy_all_seed = "ซื้อเมล็ดทั้งหมด",
-        auto_buy_gear = "ซื้ออุปกรณ์อัตโนมัติ", auto_buy_all_gear = "ซื้ออุปกรณ์ทั้งหมด",
-        seed_shop_live = "ร้านเมล็ด(สด)", gear_shop_live = "ร้านอุปกรณ์(สด)",
-        job_id = "Job ID", join_server = "เข้าเซิร์ฟ", rejoin_server = "เข้าใหม่", hop_server = "เปลี่ยนเซิร์ฟ",
-        copy_job_id = "คัดลอก Job ID", webhook_url = "Webhook URL", auto_notification = "แจ้งเตือนอัตโนมัติ",
-        notify_minutes = "ช่วงเวลา(นาที)", test_webhook = "ทดสอบ Webhook",
-        select_pet_find = "เลือกสัตว์เลี้ยง", auto_find_pet = "หาสัตว์เลี้ยงอัตโนมัติ",
-        scan_server = "สแกนตอนนี้", hop_find_pet = "ไปเซิร์ฟอื่น",
-        discord_link = "Discord", executor_label = "Executor", roblox_user = "ผู้ใช้ Roblox",
-        redeem_code = "โค้ด(TEAMGREENBEAN)", anti_afk = "Anti-AFK", walk_speed = "ความเร็วเดิน",
-        jump_power = "พลังกระโดด", language = "ภาษา", translate = "แปล",
-        enabled = "เปิด", disabled = "ปิด", select_pet = "เลือกสัตว์เลี้ยง",
-        select_seed = "เลือกเมล็ด", select_gear = "เลือกอุปกรณ์",
-        buy_all_seeds = "ซื้อเมล็ดทั้งหมด", buy_all_gears = "ซื้ออุปกรณ์ทั้งหมด",
-        return_after_steal = "กลับ plot หลังขโมย",
-    },
+
 }
 
 local function tr(key)
@@ -713,7 +679,7 @@ task.spawn(function()
 end)
 
 local function cachePlantAreas()
-    table.clear(plantAreas)
+    clearTable(plantAreas)
     local plot = getCachedOwnedPlot()
     if not plot then return end
     local visual = plot:FindFirstChild("Visual")
@@ -1294,8 +1260,8 @@ local SELL_NETWORKING_PATHS = {
 local cachedSellRemotes, cachedSellNetworks, cachedSellCFrame = {}, {}, nil
 
 local function rebuildSellCache()
-    table.clear(cachedSellRemotes)
-    table.clear(cachedSellNetworks)
+    clearTable(cachedSellRemotes)
+    clearTable(cachedSellNetworks)
     local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
     if GE then
         for _, name in ipairs(SELL_REMOTE_NAMES) do
@@ -2743,7 +2709,7 @@ SettingsTab:Slider({
 })
 
 makeSection(SettingsTab, "language")
-local LANG_OPTIONS = { "English", "Vietnamese", "Spanish", "French", "German", "Portuguese", "Russian", "Chinese", "Japanese", "Korean", "Thai" }
+local LANG_OPTIONS = { "English", "Vietnamese" }
 pcall(function()
     SettingsTab:Dropdown({
         Title = tr("language"), Values = LANG_OPTIONS, Value = currentLang,
@@ -3030,3 +2996,16 @@ task.spawn(function()
 end)
 
 print(("[NTMT HUB] Loaded on executor: %s"):format(Executor))
+
+end) -- __NTMT pcall
+
+if not __NTMT_OK then
+    warn("[NTMT HUB] LOI:", __NTMT_ERR)
+    pcall(function()
+        game:GetService("StarterGui"):SetCore("SendNotification", {
+            Title = "NTMT HUB LOI",
+            Text = tostring(__NTMT_ERR):sub(1, 200),
+            Duration = 15,
+        })
+    end)
+end
