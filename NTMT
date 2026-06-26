@@ -322,10 +322,12 @@ GAGTab:Section({ Title = "Auto Sell" })
 local sellInterval = 0.1
 local sellInfRange = false
 
+-- CONFIRMED logic GAG2: Networking.NPCS.SellAll:Fire()
 local SELL_REMOTE_NAMES = {
     "Sell_Inventory", "SellInventory", "Sell_All", "SellAll", "SellItems",
 }
 local SELL_NETWORKING_PATHS = {
+    { "NPCS", "SellAll" }, { "NPCS", "Sell" }, { "NPCs", "SellAll" }, { "NPCs", "Sell" },
     { "Sell", "Sell" }, { "Sell", "SellAll" }, { "Sell", "SellInventory" },
     { "Garden", "Sell" }, { "Garden", "SellAll" }, { "Garden", "SellInventory" },
     { "Inventory", "Sell" }, { "Inventory", "SellAll" },
@@ -945,6 +947,55 @@ GAGTab:Button({
             Icon = "circle-check",
             Duration = 4,
         })
+    end
+})
+
+GAGTab:Button({
+    Title = "🔍 Sniff Packet: Click MUA THỦ CÔNG trong game",
+    Icon  = "radio",
+    Callback = function()
+        if not PacketRemoteEvent then
+            WindUI:Notify({ Title = "Lỗi", Content = "Packet RemoteEvent không tồn tại", Icon = "circle-x", Duration = 4 })
+            return
+        end
+        local nh = getnamecallmethod and hookmetamethod or nil
+        -- Cách 1: hook __namecall
+        local hooked = false
+        local oldNamecall
+        if hookmetamethod and getnamecallmethod then
+            pcall(function()
+                oldNamecall = hookmetamethod(game, "__namecall", function(self, ...)
+                    if self == PacketRemoteEvent and getnamecallmethod() == "FireServer" then
+                        local args = {...}
+                        if args[1] and type(args[1]) == "buffer" then
+                            local s = buffer.tostring(args[1])
+                            local hex = ""
+                            for i = 1, math.min(#s, 32) do
+                                hex = hex .. string.format("%02x ", string.byte(s, i))
+                            end
+                            print(("[SNIFF] Packet bytes (%d): %s | raw: %q"):format(#s, hex, s))
+                        end
+                    end
+                    return oldNamecall(self, ...)
+                end)
+                hooked = true
+            end)
+        end
+        if hooked then
+            WindUI:Notify({
+                Title = "Sniffer ON",
+                Content = "Bây giờ click MUA trong shop -> xem console F9",
+                Icon = "radio",
+                Duration = 8,
+            })
+        else
+            WindUI:Notify({
+                Title = "Lỗi",
+                Content = "Executor không support hookmetamethod",
+                Icon = "circle-x",
+                Duration = 4,
+            })
+        end
     end
 })
 
