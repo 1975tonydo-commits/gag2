@@ -200,6 +200,46 @@ task.spawn(function()
     end
 end)
 
+------------------------------------------------------------
+-- PLANT AREA CACHE (Visual.PlantAreaColumn*)
+------------------------------------------------------------
+
+local savedPlantPositions = {}
+
+local function cachePlantPositions()
+    table.clear(savedPlantPositions)
+    local plot = getCachedOwnedPlot()
+    if not plot then return end
+    local visual = plot:FindFirstChild("Visual")
+    if not visual then return end
+    for _, col in ipairs(visual:GetChildren()) do
+        if col.Name:match("^PlantAreaColumn") then
+            for _, part in ipairs(col:GetChildren()) do
+                if part:IsA("BasePart") then
+                    table.insert(savedPlantPositions, part.Position)
+                end
+            end
+        end
+    end
+end
+cachePlantPositions()
+task.spawn(function()
+    while task.wait(20) do pcall(cachePlantPositions) end
+end)
+
+local plantSpotIndex = 0
+local function getNextPlantPosition()
+    if #savedPlantPositions == 0 then cachePlantPositions() end
+    if #savedPlantPositions == 0 then return nil end
+    plantSpotIndex = (plantSpotIndex % #savedPlantPositions) + 1
+    return savedPlantPositions[plantSpotIndex]
+end
+
+local function getPlotIdAttribute()
+    return LocalPlayer:GetAttribute("PlotId")
+end
+
+
 local harvestRipeOnly = true
 local function isGrown(plant)
     local maxAge = plant:GetAttribute("MaxAge")
@@ -1154,15 +1194,16 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Mua TAT CA Seed",
-    Desc  = "ON = mua het seed trong shop | OFF = chi mua seed da chon trong dropdown",
+    Desc  = "ON = mua het seed trong shop (tu bat 'Auto Buy Seed')",
     Default = false,
     Callback = function(v)
         Config.BuyAllSeeds = v
+        if v then genv.ftgs_AutoBuySeed = true end  -- Tu bat parent toggle
         WindUI:Notify({
             Title = "Mua TAT CA Seed",
-            Content = v and "ON - mua het stock" or "OFF - dung dropdown",
+            Content = v and "ON - mua het stock (tu bat Auto Buy Seed)" or "OFF - dung dropdown",
             Icon = v and "shopping-cart" or "pause",
-            Duration = 2,
+            Duration = 3,
         })
     end
 })
@@ -1203,15 +1244,16 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Mua TAT CA Gear",
-    Desc  = "ON = mua het gear trong shop | OFF = chi mua gear da chon trong dropdown",
+    Desc  = "ON = mua het gear trong shop (tu bat 'Auto Buy Gear')",
     Default = false,
     Callback = function(v)
         Config.BuyAllGears = v
+        if v then genv.ftgs_AutoBuyGear = true end  -- Tu bat parent toggle
         WindUI:Notify({
             Title = "Mua TAT CA Gear",
-            Content = v and "ON - mua het stock" or "OFF - dung dropdown",
+            Content = v and "ON - mua het stock (tu bat Auto Buy Gear)" or "OFF - dung dropdown",
             Icon = v and "shopping-cart" or "pause",
-            Duration = 2,
+            Duration = 3,
         })
     end
 })
@@ -1236,7 +1278,7 @@ pcall(function()
 end)
 
 ------------------------------------------------------------
--- 9b) AUTO BUY PET (scan map cho pet co prompt mua)
+-- 9b) AUTO BUY PET (Net.Pets.WildPetTame - tu open source)
 ------------------------------------------------------------
 
 GAGTab:Section({ Title = "Auto Buy Pet" })
@@ -1248,123 +1290,110 @@ local PET_LIST = {
     "Black Dragon", "Ice Serpent",
 }
 
-local PetWhitelist = {}  -- {PetName = true}
-local BuyAllPets   = false
-local petInterval  = 0.5
-local BoughtPets   = {}  -- count by name (cho webhook)
+local PetWhitelist  = {}     -- {PetName = true}
+local BuyAllPets    = false
+local BoughtPets    = {}     -- count by name (cho webhook)
+local petCatchCooldown = {}  -- {refKey = lastClock}
+local petCatchInterval = 0.4
+local isCatchingPet = false
 
-local function petLowerName(name)
-    return tostring(name or ""):lower():gsub("^%s+", ""):gsub("%s+$", "")
+-- Locate WildPetSpawns + WildPetFolder
+local function getWildPetSpawns()
+    local map = Services.Workspace:FindFirstChild("Map")
+    return (map and map:FindFirstChild("WildPetSpawns")) or Services.Workspace:FindFirstChild("WildPetSpawns")
 end
 
--- Kiem tra model co phai la pet co the mua khong
-local function getPetNameFromModel(model)
+local function getWildPetFolder()
+    local map = Services.Workspace:FindFirstChild("Map")
+    return (map and map:FindFirstChild("WildPets")) or Services.Workspace:FindFirstChild("WildPets")
+end
+
+-- Tu source: WildPet_<X>_<refName> => ref part trong WildPetFolder
+local function resolveRefPartFromModel(model)
     if not model or not model:IsA("Model") then return nil end
-    local nlow = petLowerName(model.Name)
-    for _, petName in ipairs(PET_LIST) do
-        if nlow:find(petLowerName(petName), 1, true) then
-            return petName
-        end
-    end
-    -- Attribute fallback
-    local petAttr = model:GetAttribute("PetName") or model:GetAttribute("Species")
-    if petAttr then
-        for _, petName in ipairs(PET_LIST) do
-            if petLowerName(petAttr):find(petLowerName(petName), 1, true) then
-                return petName
-            end
-        end
-    end
+    local folder = getWildPetFolder()
+    if not folder then return nil end
+    local refName = string.match(model.Name, "^WildPet_.-_(.+)$") or model.Name
+    local ref = folder:FindFirstChild(refName)
+    if ref and ref:IsA("BasePart") then return ref end
     return nil
 end
 
--- Tim pet model + prompt mua tren map
-local function getBuyablePets()
-    local out = {}  -- list { model, petName, prompt }
-    local pets = Services.Workspace:FindFirstChild("Pets")
-        or Services.Workspace:FindFirstChild("WildPets")
-        or Services.Workspace:FindFirstChild("ActivePets")
-        or Services.Workspace
-    if not pets then return out end
-
-    -- Tim pet trong cac container co the
-    local function scan(container, depth)
-        if not container or depth > 4 then return end
-        for _, child in ipairs(container:GetChildren()) do
-            local petName = getPetNameFromModel(child)
-            if petName then
-                local prompt = child:FindFirstChildWhichIsA("ProximityPrompt", true)
-                if prompt then
-                    local at = (prompt.ActionText or ""):lower()
-                    local ot = (prompt.ObjectText or ""):lower()
-                    -- ProximityPrompt phai la "Buy"/"Purchase"/"Adopt" hoac chua ten pet
-                    if at:find("buy") or at:find("purchase") or at:find("adopt") or at:find("claim") or
-                       ot:find("buy") or ot:find("purchase") or ot:find(petLowerName(petName), 1, true) then
-                        table.insert(out, { model = child, petName = petName, prompt = prompt })
-                    end
-                end
-            else
-                -- Recurse vao folder (nhung khong vao model)
-                if child:IsA("Folder") or child:IsA("Configuration") then
-                    scan(child, depth + 1)
-                end
-            end
-        end
-    end
-
-    scan(pets, 0)
-
-    -- Backup: scan workspace neu khong tim duoc trong pet folders
-    if #out == 0 and pets ~= Services.Workspace then
-        scan(Services.Workspace, 0)
-    end
-    return out
+local function isRefTameable(refPart)
+    if not refPart or not refPart:IsA("BasePart") or not refPart.Parent then return false end
+    local ownerId = refPart:GetAttribute("OwnerUserId")
+    if ownerId == LocalPlayer.UserId then return false end
+    if type(ownerId) == "number" and ownerId ~= 0 then return false end
+    local price = refPart:GetAttribute("Price")
+    if type(price) == "number" and getSheckles() < price then return false end
+    return true
 end
 
-local function buyPet(petInfo)
-    local model = petInfo.model
-    local prompt = petInfo.prompt
-    if not model or not prompt then return false end
+local function matchesPetName(species, target)
+    if not species or not target then return false end
+    local a = string.lower(tostring(species)):gsub("%s+", "")
+    local b = string.lower(tostring(target)):gsub("%s+", "")
+    return a == b or a:find(b, 1, true) ~= nil or b:find(a, 1, true) ~= nil
+end
+
+local function getModelRoot(model)
+    return model.PrimaryPart or model:FindFirstChild("RootPart") or model:FindFirstChildWhichIsA("BasePart")
+end
+
+local function catchWildPet(model, ref)
+    if not model or not ref then return false end
     local hrp = getRoot(LocalPlayer)
     if not hrp then return false end
 
-    -- TP toi pet
-    local part = getPartFromObj(model)
-    if not part then return false end
-    local origCF = hrp.CFrame
-    pcall(function() hrp.CFrame = part.CFrame + Vector3.new(0, 3, 0) end)
-    task.wait(0.1)
-
-    -- Fire prompt (cho moi executor)
-    local fired = false
-    if fireproximityprompt then
-        local ok = pcall(fireproximityprompt, prompt, 0)
-        if ok then fired = true end
+    local key = tostring(ref)
+    local now = os.clock()
+    if petCatchCooldown[key] and now - petCatchCooldown[key] < 5 then
+        return false
     end
-    if not fired then
-        -- Fallback: HoldDuration + InputHoldBegin
-        pcall(function()
-            local oldHold = prompt.HoldDuration
-            prompt.HoldDuration = 0
-            prompt:InputHoldBegin()
-            task.wait(0.05)
-            prompt:InputHoldEnd()
-            prompt.HoldDuration = oldHold
+    petCatchCooldown[key] = now
+
+    local savedCF = hrp.CFrame
+    local root = getModelRoot(model)
+    if root then
+        pcall(function() hrp.CFrame = CFrame.new(root.Position + Vector3.new(0, 3, 0)) end)
+    end
+    task.wait(0.3)
+
+    -- Listen result
+    local tameDone = false
+    local conn
+    if Networking and Networking.Pets and Networking.Pets.WildPetTameResult and Networking.Pets.WildPetTameResult.OnClientEvent then
+        conn = Networking.Pets.WildPetTameResult.OnClientEvent:Connect(function(_, userId)
+            if userId == LocalPlayer.UserId then tameDone = true end
         end)
     end
-    task.wait(0.15)
-    pcall(function() hrp.CFrame = origCF end)
 
-    BoughtPets[petInfo.petName] = (BoughtPets[petInfo.petName] or 0) + 1
-    return true
+    pcall(function() Networking.Pets.WildPetTame:Fire(ref) end)
+
+    local deadline = os.clock() + 2.0
+    while not tameDone and os.clock() < deadline do task.wait(0.1) end
+    if conn then conn:Disconnect() end
+
+    -- Quay ve plot ngay sau khi mua xong (KHONG keep tp toi cho khac)
+    pcall(function() hrp.CFrame = savedCF end)
+
+    if tameDone then
+        local petName = model:GetAttribute("PetName") or model.Name
+        BoughtPets[petName] = (BoughtPets[petName] or 0) + 1
+        return true
+    end
+    return false
 end
 
 GAGTab:Toggle({
     Title = "Auto Buy Pet",
-    Desc  = "Bat de auto mua pet spawn tren map",
+    Desc  = "Tu mua wild pet spawn tren map (Net.Pets.WildPetTame)",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoBuyPet = state
+        if state and (not Networking or not Networking.Pets or not Networking.Pets.WildPetTame) then
+            WindUI:Notify({ Title = "Auto Buy Pet", Content = "Networking.Pets.WildPetTame khong ton tai!", Icon = "circle-x", Duration = 5 })
+        end
         WindUI:Notify({
             Title = "Auto Buy Pet",
             Content = state and "DA BAT" or "Da tat",
@@ -1376,15 +1405,19 @@ GAGTab:Toggle({
 
 GAGTab:Toggle({
     Title = "Mua TAT CA Pet",
-    Desc  = "ON = mua het pet spawn | OFF = chi mua pet da chon trong dropdown",
+    Desc  = "ON = mua het pet spawn (tu bat Auto Buy Pet) | OFF = chi mua pet chon trong dropdown",
     Default = false,
     Callback = function(v)
         BuyAllPets = v
+        if v then
+            -- Tu dong bat Auto Buy Pet de user khong can click 2 toggle
+            genv.ftgs_AutoBuyPet = true
+        end
         WindUI:Notify({
             Title = "Mua TAT CA Pet",
-            Content = v and "ON - mua het pet spawn" or "OFF - dung dropdown",
+            Content = v and "ON - mua het pet spawn (tu bat Auto Buy Pet)" or "OFF - dung dropdown",
             Icon = v and "shopping-cart" or "pause",
-            Duration = 2,
+            Duration = 3,
         })
     end
 })
@@ -1408,180 +1441,67 @@ pcall(function()
     })
 end)
 
-GAGTab:Slider({
-    Title = "Chu ky scan pet (giay)",
-    Step  = 0.1,
-    Value = { Min = 0.2, Max = 5, Default = 0.5 },
-    Callback = function(v) petInterval = v end
-})
-
-GAGTab:Button({
-    Title = "Scan pet tren map ngay",
-    Icon  = "search",
-    Callback = function()
-        local pets = getBuyablePets()
-        if #pets == 0 then
-            WindUI:Notify({ Title = "Pets", Content = "Khong tim thay pet nao co prompt", Icon = "info", Duration = 3 })
-        else
-            local names = {}
-            for _, p in ipairs(pets) do table.insert(names, p.petName) end
-            WindUI:Notify({
-                Title = ("Tim thay %d pet"):format(#pets),
-                Content = table.concat(names, ", "),
-                Icon = "info",
-                Duration = 5,
-            })
-            print("[NTMT HUB] Pets on map:", table.concat(names, ", "))
-        end
-    end
-})
-
 ------------------------------------------------------------
 -- 10) AUTO PLANT (auto detect remote)
 ------------------------------------------------------------
 
 GAGTab:Section({ Title = "Auto Plant" })
 
-local plantInterval = 0.3
-local cachedPlantRemote = nil
+local plantInterval = 0.4
 
--- Wiki seed list: https://growagarden2.fandom.com/wiki/Seed_Shop
+-- Wiki seed list (de chon trong dropdown)
 local WIKI_SEED_LIST = {
     "Carrot", "Strawberry", "Blueberry", "Tulip", "Tomato",
     "Apple", "Bamboo", "Corn", "Cactus", "Pineapple",
     "Mushroom", "Green Bean", "Banana", "Grape", "Coconut",
     "Mango", "Dragon Fruit", "Acorn", "Cherry", "Sunflower",
     "Venus Fly Trap", "Pomegranate", "Poison Apple", "Venom Spitter",
-    "Moon Bloom", "Dragon's Breath",
+    "Moon Bloom", "Dragon\'s Breath",
 }
 
--- Seed selection
-local PlantWhitelist = {}  -- {SeedName = true, ...}
-local PlantAll = true       -- ON = plant all seeds co trong inventory
+local PlantWhitelist = {}  -- {SeedName = true}
+local PlantAll = true       -- ON = plant het seed trong inventory
 
--- Plant remote: thu nhieu duong (Networking module + GameEvents + raw scan)
-local PLANT_REMOTE_NAMES = {
-    "Plant_RE", "PlantSeed", "PlantSeed_RE", "Plant", "PlaceSeed", "PlantItem", "PlantCrop",
-}
-
--- Cache Networking packet (priority cao nhat - kieu Fire)
-local cachedPlantPacket = nil
-local cachedPlantPacketName = nil
-
-local function findPlantPacket()
-    if cachedPlantPacket then return cachedPlantPacket end
-    if not Networking then return nil end
-    local candidatePaths = {
-        {"Garden", "Plant"}, {"Garden", "PlantSeed"}, {"Garden", "PlaceSeed"},
-        {"Plants", "Plant"}, {"Plant", "Plant"}, {"Plant", "PlantSeed"},
-        {"Farming", "Plant"}, {"Farming", "PlantSeed"},
-    }
-    for _, path in ipairs(candidatePaths) do
-        local cat = Networking[path[1]]
-        local fn  = cat and cat[path[2]]
-        if type(fn) == "table" and fn.Fire then
-            cachedPlantPacket = fn
-            cachedPlantPacketName = ("Networking.%s.%s"):format(path[1], path[2])
-            return fn
-        end
-    end
-    -- Scan tat ca category cua Networking
-    for catName, cat in pairs(Networking) do
-        if type(cat) == "table" then
-            for fnName, fn in pairs(cat) do
-                local fl = string.lower(tostring(fnName))
-                if type(fn) == "table" and fn.Fire and fl:find("plant") then
-                    cachedPlantPacket = fn
-                    cachedPlantPacketName = ("Networking.%s.%s"):format(catName, fnName)
-                    return fn
+-- TIM seed tool theo attribute "SeedTool" (chuan tu game source)
+local function findSeedTool(seedName)
+    local function scan(container)
+        if not container then return nil end
+        for _, t in ipairs(container:GetChildren()) do
+            if t:IsA("Tool") then
+                local attr = t:GetAttribute("SeedTool")
+                if attr and (seedName == nil or attr == seedName) then
+                    return t, attr
                 end
             end
         end
     end
-    return nil
+    local t, n = scan(LocalPlayer.Character)
+    if t then return t, n end
+    return scan(LocalPlayer:FindFirstChild("Backpack"))
 end
 
-local function findPlantRemote()
-    if cachedPlantRemote and cachedPlantRemote.Parent then return cachedPlantRemote end
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    if GE then
-        for _, n in ipairs(PLANT_REMOTE_NAMES) do
-            local r = GE:FindFirstChild(n)
-            if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then
-                cachedPlantRemote = r
-                return r
-            end
-        end
-    end
-    for _, obj in ipairs(Services.ReplicatedStorage:GetDescendants()) do
-        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-            local n = obj.Name:lower()
-            if n:find("plant") and not n:find("plantid") and not n:find("complete") then
-                cachedPlantRemote = obj
-                return obj
-            end
-        end
-    end
-    return nil
-end
-
--- Log ket qua detect ngay khi load
-task.spawn(function()
-    local p = findPlantPacket()
-    local r = findPlantRemote()
-    print(("[NTMT HUB] Plant Packet = %s | Remote = %s"):format(
-        tostring(cachedPlantPacketName or "NIL"),
-        r and r:GetFullName() or "NIL"))
-end)
-
--- Extract seed name from tool name: "Carrot Seed" -> "Carrot"
-local function extractSeedName(toolName)
-    local n = tostring(toolName or "")
-    n = n:gsub(" Seed$", ""):gsub("Seed$", "")
-    return n:match("^%s*(.-)%s*$")
-end
-
--- Get all seed tools in inventory (Backpack + Character)
-local function getInventorySeedTools()
-    local out = {}
-    local seen = {}
-    for _, container in ipairs({ LocalPlayer.Character, LocalPlayer:FindFirstChildOfClass("Backpack") }) do
-        if container then
-            for _, tool in ipairs(container:GetChildren()) do
-                if tool:IsA("Tool") then
-                    local nlow = tool.Name:lower()
-                    -- Heuristic: tool co "seed" trong ten hoac co attribute SeedName
-                    local isSeed = nlow:find("seed") or tool:GetAttribute("SeedName")
-                    if isSeed and not seen[tool.Name] then
-                        seen[tool.Name] = true
-                        table.insert(out, tool)
-                    end
-                end
-            end
-        end
-    end
-    return out
-end
-
+-- Lay danh sach seed name tu inventory tool (theo attribute)
 local function getInventorySeedNames()
     local names = {}
-    for _, t in ipairs(getInventorySeedTools()) do
-        table.insert(names, t.Name)
+    local seen = {}
+    local function scan(container)
+        if not container then return end
+        for _, t in ipairs(container:GetChildren()) do
+            if t:IsA("Tool") then
+                local attr = t:GetAttribute("SeedTool")
+                if attr and not seen[attr] then
+                    seen[attr] = true
+                    table.insert(names, attr)
+                end
+            end
+        end
     end
+    scan(LocalPlayer.Character)
+    scan(LocalPlayer:FindFirstChild("Backpack"))
     return names
 end
 
-local function findToolInInventory(toolName)
-    for _, container in ipairs({ LocalPlayer.Character, LocalPlayer:FindFirstChildOfClass("Backpack") }) do
-        if container then
-            local t = container:FindFirstChild(toolName)
-            if t and t:IsA("Tool") then return t end
-        end
-    end
-    return nil
-end
-
--- Equip 1 tool: chuyen tu Backpack vao Character va doi xac nhan
+-- Equip tool va doi tool xuat hien trong Character
 local function equipTool(tool)
     if not tool then return false end
     local char = LocalPlayer.Character
@@ -1589,100 +1509,63 @@ local function equipTool(tool)
     if tool.Parent == char then return true end
     local hum = char:FindFirstChildOfClass("Humanoid")
     if not hum then return false end
-    -- Unequip tool khac truoc
-    pcall(function() hum:UnequipTools() end)
-    task.wait(0.03)
     pcall(function() hum:EquipTool(tool) end)
-    -- Doi tool xuat hien trong character (max 0.3s)
-    local deadline = os.clock() + 0.3
+    local deadline = os.clock() + 0.4
     while tool.Parent ~= char and os.clock() < deadline do
-        task.wait(0.02)
+        task.wait(0.03)
     end
     return tool.Parent == char
 end
 
-local function firePlant(position, seedName)
-    -- UU TIEN 1: Networking packet
-    local packet = findPlantPacket()
-    if packet then
-        local ok1 = pcall(function() packet:Fire(position, seedName) end)
-        if ok1 then return true end
-        pcall(function() packet:Fire(seedName, position) end)
-        pcall(function() packet:Fire(position) end)
-        return true
-    end
-    -- UU TIEN 2: Raw RemoteEvent/Function
-    local rem = findPlantRemote()
-    if rem then
-        if rem:IsA("RemoteEvent") then
-            pcall(function() rem:FireServer(position, seedName) end)
-            pcall(function() rem:FireServer(seedName, position) end)
-            pcall(function() rem:FireServer(position) end)
-        else
-            pcall(function() rem:InvokeServer(position, seedName) end)
-        end
-        return true
-    end
-    return false
+-- Fire plant qua Networking.Plant.PlantSeed (CHUAN tu source)
+local function firePlant(plantPos, seedName, tool)
+    if not Networking then return false end
+    local plant = Networking.Plant
+    if not plant or not plant.PlantSeed then return false end
+    local ok = pcall(function() plant.PlantSeed:Fire(plantPos, seedName, tool) end)
+    return ok
 end
 
--- Plant 1 chu ki: equip tool + fire plant tai vi tri dang dung
-local function plantOneSeed(tool)
+-- Plant 1 chu ki: equip seed tool roi fire plant
+local function plantOneSeed(seedName)
+    local tool = findSeedTool(seedName)
+    if not tool then return false end
     if not equipTool(tool) then return false end
-    local hrp = getRoot(LocalPlayer)
-    if not hrp then return false end
-    local seedName = extractSeedName(tool.Name)
-    firePlant(hrp.Position, seedName)
-    return true
-end
 
--- Khop seed name (vd "Carrot") voi tool trong inventory (vd "Carrot Seed")
-local function isToolMatchSeed(toolName, seedName)
-    local tn = toolName:lower():gsub(" seed$", ""):gsub("seed$", ""):gsub("^%s+", ""):gsub("%s+$", "")
-    return tn == seedName:lower():gsub("^%s+", ""):gsub("%s+$", "")
+    local plantPos = getNextPlantPosition()
+    if not plantPos then return false end
+
+    -- TP toi gan plant area neu xa
+    local hrp = getRoot(LocalPlayer)
+    if hrp then
+        local flat = (Vector3.new(plantPos.X, 0, plantPos.Z) - Vector3.new(hrp.Position.X, 0, hrp.Position.Z)).Magnitude
+        if flat > 25 then
+            pcall(function() hrp.CFrame = CFrame.new(plantPos + Vector3.new(0, 3, 0)) end)
+            task.wait(0.05)
+        end
+    end
+
+    return firePlant(plantPos, seedName, tool)
 end
 
 GAGTab:Toggle({
     Title = "Auto Plant",
-    Desc  = "Tu equip seed trong inventory va plant tai vi tri dang dung",
+    Desc  = "Tu equip seed (SeedTool attr) va plant theo plant area cua plot",
     Default = false,
     Callback = function(state)
         genv.ftgs_AutoPlant = state
         if state then
-            local packet = findPlantPacket()
-            local rem    = findPlantRemote()
-            if not packet and not rem then
-                WindUI:Notify({
-                    Title = "Plant Remote",
-                    Content = "KHONG tim duoc Plant remote/packet! Mo Info > Chan doan Auto Plant.",
-                    Icon = "circle-x",
-                    Duration = 5,
-                })
+            local n = #getInventorySeedNames()
+            if not Networking or not Networking.Plant or not Networking.Plant.PlantSeed then
+                WindUI:Notify({ Title = "Plant", Content = "Networking.Plant.PlantSeed khong ton tai!", Icon = "circle-x", Duration = 5 })
+            elseif n == 0 then
+                WindUI:Notify({ Title = "Auto Plant", Content = "Inventory chua co seed (cam tool co attribute SeedTool)", Icon = "circle-x", Duration = 4 })
             else
-                local invSeeds = #getInventorySeedTools()
-                if invSeeds == 0 then
-                    WindUI:Notify({
-                        Title = "Auto Plant",
-                        Content = "Inventory chua co seed nao - buy seed truoc!",
-                        Icon = "circle-x",
-                        Duration = 4,
-                    })
-                else
-                    WindUI:Notify({
-                        Title = "Auto Plant",
-                        Content = ("DA BAT - %d seed trong inventory"):format(invSeeds),
-                        Icon = "play",
-                        Duration = 3,
-                    })
-                end
+                cachePlantPositions()
+                WindUI:Notify({ Title = "Auto Plant", Content = ("DA BAT - %d seed | %d plant area"):format(n, #savedPlantPositions), Icon = "play", Duration = 3 })
             end
         else
-            WindUI:Notify({
-                Title = "Auto Plant",
-                Content = "Da tat",
-                Icon = "pause",
-                Duration = 2,
-            })
+            WindUI:Notify({ Title = "Auto Plant", Content = "Da tat", Icon = "pause", Duration = 2 })
         end
     end
 })
@@ -1693,12 +1576,6 @@ GAGTab:Toggle({
     Default = true,
     Callback = function(v)
         PlantAll = v
-        WindUI:Notify({
-            Title = "Plant TAT CA",
-            Content = v and "ON - plant het seed trong inventory" or "OFF - dung dropdown",
-            Icon = v and "play" or "pause",
-            Duration = 2,
-        })
     end
 })
 
@@ -1719,6 +1596,300 @@ pcall(function()
             end
         end
     })
+end)
+
+GAGTab:Slider({
+    Title = "Toc do Plant (giay)",
+    Step  = 0.1,
+    Value = { Min = 0.2, Max = 3, Default = 0.4 },
+    Callback = function(v) plantInterval = v end
+})
+
+------------------------------------------------------------
+-- 10c) AUTO EXPAND GARDEN
+------------------------------------------------------------
+
+GAGTab:Section({ Title = "Auto Expand Garden" })
+
+genv.ftgs_AutoExpand = false
+local expandInterval = 8
+
+GAGTab:Toggle({
+    Title = "Auto Expand Garden",
+    Desc  = "Tu mua expansion khi du tien (Net.Actions.ExpandGarden)",
+    Default = false,
+    Callback = function(v)
+        genv.ftgs_AutoExpand = v
+        if v and not (Networking and Networking.Actions and Networking.Actions.ExpandGarden) then
+            WindUI:Notify({ Title = "Auto Expand", Content = "Networking.Actions.ExpandGarden khong ton tai!", Icon = "circle-x", Duration = 4 })
+        end
+        WindUI:Notify({ Title = "Auto Expand", Content = v and "DA BAT" or "Da tat", Icon = v and "play" or "pause", Duration = 2 })
+    end
+})
+
+-- Loop
+task.spawn(function()
+    while true do
+        task.wait(expandInterval)
+        if genv.ftgs_AutoExpand and Networking and Networking.Actions and Networking.Actions.ExpandGarden then
+            pcall(function() Networking.Actions.ExpandGarden:Fire() end)
+        end
+    end
+end)
+
+------------------------------------------------------------
+-- 10d) AUTO SPRINKLER / WATERING CAN
+------------------------------------------------------------
+
+GAGTab:Section({ Title = "Auto Sprinkler & Watering" })
+
+genv.ftgs_AutoSprinkler = false
+local sprinklerInterval = 0.6
+
+-- Sprinkler rarity priority list (default: het loai)
+local SPRINKLER_RARITIES = { "Super", "Legendary", "Rare", "Uncommon", "Common" }
+local SPRINKLER_PRIORITY = { "Super Sprinkler", "Legendary Sprinkler", "Rare Sprinkler", "Uncommon Sprinkler", "Common Sprinkler" }
+local WATERINGCAN_PRIORITY = { "Super Watering Can", "Common Watering Can" }
+
+-- Tim gear tool theo attribute (Sprinkler / WateringCan)
+local function findGearByAttr(attrName, priorityList)
+    local found = {}
+    local function scan(c)
+        if not c then return end
+        for _, t in ipairs(c:GetChildren()) do
+            if t:IsA("Tool") then
+                local name = t:GetAttribute(attrName)
+                if name then found[name] = t end
+            end
+        end
+    end
+    scan(LocalPlayer.Character)
+    scan(LocalPlayer:FindFirstChild("Backpack"))
+    for _, name in ipairs(priorityList) do
+        local t = found[name]
+        if t then return t, name end
+    end
+    return nil
+end
+
+GAGTab:Toggle({
+    Title = "Auto Sprinkler + Watering Can",
+    Desc  = "Tu su dung Sprinkler + Watering Can len plant chua chin",
+    Default = false,
+    Callback = function(v)
+        genv.ftgs_AutoSprinkler = v
+        WindUI:Notify({ Title = "Auto Sprinkler", Content = v and "DA BAT" or "Da tat", Icon = v and "play" or "pause", Duration = 2 })
+    end
+})
+
+pcall(function()
+    GAGTab:Dropdown({
+        Title = "Chon Sprinkler rarity (uu tien tu cao xuong thap)",
+        Values = SPRINKLER_RARITIES,
+        Value = SPRINKLER_RARITIES,
+        Multi = true,
+        AllowNone = false,
+        Callback = function(sel)
+            -- Build priority list theo rarity chon
+            local order = { Super = 1, Legendary = 2, Rare = 3, Uncommon = 4, Common = 5 }
+            local enabled = {}
+            if type(sel) == "table" then
+                for k, v in pairs(sel) do
+                    local name = (type(v) == "string") and v or k
+                    if type(name) == "string" then enabled[name] = true end
+                end
+            end
+            -- Sort by priority
+            local list = {}
+            for _, r in ipairs(SPRINKLER_RARITIES) do
+                if enabled[r] then
+                    table.insert(list, r .. " Sprinkler")
+                end
+            end
+            if #list == 0 then list = { "Super Sprinkler", "Legendary Sprinkler", "Rare Sprinkler", "Uncommon Sprinkler", "Common Sprinkler" } end
+            SPRINKLER_PRIORITY = list
+        end
+    })
+end)
+
+GAGTab:Slider({
+    Title = "Chu ky Sprinkler (giay)",
+    Step  = 0.1,
+    Value = { Min = 0.3, Max = 5, Default = 0.6 },
+    Callback = function(v) sprinklerInterval = v end
+})
+
+-- Loop
+task.spawn(function()
+    while true do
+        task.wait(sprinklerInterval)
+        if genv.ftgs_AutoSprinkler and Networking then
+            pcall(function()
+                local plotId = getPlotIdAttribute()
+                if not plotId then return end
+                local plantPos = getNextPlantPosition()
+                if not plantPos then return end
+
+                local canTool, canName = findGearByAttr("WateringCan", WATERINGCAN_PRIORITY)
+                local sprinklerTool, sprinklerName = findGearByAttr("Sprinkler", SPRINKLER_PRIORITY)
+                if not canTool and not sprinklerTool then return end
+
+                local hrp = getRoot(LocalPlayer)
+                local savedCF = hrp and hrp.CFrame
+                if hrp then
+                    local flat = (Vector3.new(plantPos.X, 0, plantPos.Z) - Vector3.new(hrp.Position.X, 0, hrp.Position.Z)).Magnitude
+                    if flat > 25 then
+                        pcall(function() hrp.CFrame = CFrame.new(plantPos + Vector3.new(0, 3, 0)) end)
+                        task.wait(0.05)
+                    end
+                end
+
+                if canTool and Networking.WateringCan and Networking.WateringCan.UseWateringCan then
+                    equipTool(canTool)
+                    pcall(function()
+                        Networking.WateringCan.UseWateringCan:Fire(plantPos - Vector3.new(0, 0.3, 0), canName, canTool)
+                    end)
+                    task.wait(0.5)
+                end
+
+                if sprinklerTool and Networking.Place and Networking.Place.PlaceSprinkler then
+                    equipTool(sprinklerTool)
+                    pcall(function()
+                        Networking.Place.PlaceSprinkler:Fire(plantPos, sprinklerName, sprinklerTool, plotId)
+                    end)
+                    task.wait(0.3)
+                end
+
+                if hrp and savedCF then
+                    pcall(function() hrp.CFrame = savedCF end)
+                end
+            end)
+        end
+    end
+end)
+
+------------------------------------------------------------
+-- 10e) AUTO SHOVEL (xoa cay)
+------------------------------------------------------------
+
+GAGTab:Section({ Title = "Auto Shovel" })
+
+genv.ftgs_AutoShovel = false
+local shovelInterval = 0.5
+local ShovelWhitelist = {}    -- {PlantName = true}
+local ShovelAll       = false  -- ON = shovel het plant trong plot
+
+-- Wiki crop list: https://growagarden2.fandom.com/wiki/Crops
+local WIKI_CROP_LIST = {
+    "Carrot", "Strawberry", "Blueberry", "Tulip", "Tomato",
+    "Apple", "Bamboo", "Corn", "Cactus", "Pineapple",
+    "Mushroom", "Green Bean", "Banana", "Grape", "Coconut",
+    "Mango", "Dragon Fruit", "Acorn", "Cherry", "Sunflower",
+    "Venus Fly Trap", "Pomegranate", "Poison Apple", "Venom Spitter",
+    "Moon Bloom", "Dragon\'s Breath",
+}
+
+local function findShovelTool()
+    local function scan(c)
+        if not c then return nil end
+        for _, t in ipairs(c:GetChildren()) do
+            if t:IsA("Tool") and t:GetAttribute("Shovel") then
+                return t, t:GetAttribute("Shovel")
+            end
+        end
+    end
+    local t, n = scan(LocalPlayer.Character)
+    if t then return t, n end
+    return scan(LocalPlayer:FindFirstChild("Backpack"))
+end
+
+-- Lay plants trong plot voi seedName
+local function getPlantsToShovel()
+    local out = {}
+    local plot = getCachedOwnedPlot()
+    if not plot then return out end
+    local plantsFolder = plot:FindFirstChild("Plants")
+    if not plantsFolder then return out end
+    for _, p in ipairs(plantsFolder:GetChildren()) do
+        local plantId = p:GetAttribute("PlantId")
+        local seedName = p:GetAttribute("SeedName") or p:GetAttribute("PlantName") or p.Name
+        if plantId and seedName then
+            if ShovelAll or ShovelWhitelist[seedName] then
+                table.insert(out, { plantId = plantId, seedName = seedName, plant = p })
+            end
+        end
+    end
+    return out
+end
+
+GAGTab:Toggle({
+    Title = "Auto Shovel",
+    Desc  = "Tu shovel plant da chon (can cam Shovel tool)",
+    Default = false,
+    Callback = function(v)
+        genv.ftgs_AutoShovel = v
+        if v and not findShovelTool() then
+            WindUI:Notify({ Title = "Auto Shovel", Content = "Khong co Shovel trong inventory!", Icon = "circle-x", Duration = 4 })
+        end
+        WindUI:Notify({ Title = "Auto Shovel", Content = v and "DA BAT" or "Da tat", Icon = v and "play" or "pause", Duration = 2 })
+    end
+})
+
+GAGTab:Toggle({
+    Title = "Shovel TAT CA plant",
+    Desc  = "ON = shovel het plant trong plot | OFF = chi shovel plant chon",
+    Default = false,
+    Callback = function(v)
+        ShovelAll = v
+        if v then genv.ftgs_AutoShovel = true end
+    end
+})
+
+pcall(function()
+    GAGTab:Dropdown({
+        Title = "Chon plant de shovel (khi 'Shovel TAT CA' = OFF)",
+        Values = WIKI_CROP_LIST,
+        Value = nil,
+        Multi = true,
+        AllowNone = true,
+        Callback = function(sel)
+            ShovelWhitelist = {}
+            if type(sel) == "table" then
+                for k, v in pairs(sel) do
+                    if type(v) == "string" then ShovelWhitelist[v] = true
+                    elseif type(k) == "string" and v then ShovelWhitelist[k] = true end
+                end
+            end
+        end
+    })
+end)
+
+GAGTab:Slider({
+    Title = "Chu ky Shovel (giay)",
+    Step  = 0.1,
+    Value = { Min = 0.2, Max = 3, Default = 0.5 },
+    Callback = function(v) shovelInterval = v end
+})
+
+-- Loop
+task.spawn(function()
+    while true do
+        task.wait(shovelInterval)
+        if genv.ftgs_AutoShovel and Networking and Networking.Shovel and Networking.Shovel.UseShovel then
+            pcall(function()
+                local shovelTool, shovelName = findShovelTool()
+                if not shovelTool or not shovelName then return end
+                equipTool(shovelTool)
+                for _, t in ipairs(getPlantsToShovel()) do
+                    if not genv.ftgs_AutoShovel then break end
+                    pcall(function()
+                        Networking.Shovel.UseShovel:Fire(t.plantId, "", shovelName, shovelTool)
+                    end)
+                    task.wait(0.15)
+                end
+            end)
+        end
+    end
 end)
 
 ------------------------------------------------------------
@@ -1851,12 +2022,24 @@ genv.ftgs_AutoCollectItemDrop    = false
 
 local collectInterval = 0.3
 
+-- Tu source: Map.SeedPackSpawnServerLocations chua spawn voi attr RainbowSeed / GoldSeed
+local function getSeedPackFolder()
+    local map = Services.Workspace:FindFirstChild("Map")
+    return map and map:FindFirstChild("SeedPackSpawnServerLocations")
+end
+
 local function isRainbowGoldSeed(item)
     if not item or not item.Parent then return false end
+    -- Check attribute truoc (chuan tu game)
+    if item:GetAttribute("RainbowSeed") == true or item:GetAttribute("GoldSeed") == true then
+        return item:FindFirstChildWhichIsA("ProximityPrompt", true) ~= nil
+    end
+    -- Fallback theo ten
     local n = item.Name:lower()
-    if not (n:find("rainbow") or n:find("gold")) then return false end
-    -- Phải có ProximityPrompt để collect
-    return item:FindFirstChildWhichIsA("ProximityPrompt", true) ~= nil
+    if n:find("rainbow") or n:find("gold") then
+        return item:FindFirstChildWhichIsA("ProximityPrompt", true) ~= nil
+    end
+    return false
 end
 
 local function isItemDrop(item)
@@ -1875,19 +2058,46 @@ local function isItemDrop(item)
     return false
 end
 
+local function fireProximityPromptStrong(prompt)
+    if not prompt or not prompt:IsA("ProximityPrompt") then return false end
+    if fireproximityprompt then
+        local ok = pcall(fireproximityprompt, prompt, prompt.HoldDuration)
+        if ok then return true end
+        ok = pcall(fireproximityprompt, prompt)
+        if ok then return true end
+    end
+    -- Fallback: InputHoldBegin/End
+    local ok = pcall(function()
+        local oldHold = prompt.HoldDuration
+        prompt.HoldDuration = 0
+        prompt:InputHoldBegin()
+        task.wait(0.05)
+        prompt:InputHoldEnd()
+        prompt.HoldDuration = oldHold
+    end)
+    return ok
+end
+
 local function fireCollect(item)
     local hrp = getRoot(LocalPlayer)
     if not hrp then return end
     local part = getPartFromObj(item)
-    if not part then return end
-    local origCF = hrp.CFrame
-    smartTeleport(CFrame.new(part.Position + Vector3.new(0, 3, 0)))
-    task.wait(0.06)
-    local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
-    if prompt and fireproximityprompt then
-        pcall(fireproximityprompt, prompt, 0)
+    local pos
+    if part then
+        pos = part.Position
+    elseif item:IsA("Model") then
+        pos = item:GetPivot().Position
     end
-    smartTeleport(origCF)
+    if not pos then return end
+    local origCF = hrp.CFrame
+    pcall(function() hrp.CFrame = CFrame.new(pos + Vector3.new(0, 3, 0)) end)
+    task.wait(0.15)
+    local prompt = item:FindFirstChildWhichIsA("ProximityPrompt", true)
+    if prompt then
+        fireProximityPromptStrong(prompt)
+        task.wait(prompt.HoldDuration + 0.1)
+    end
+    pcall(function() hrp.CFrame = origCF end)
 end
 
 GAGTab:Toggle({
@@ -2406,7 +2616,340 @@ ServerTab:Button({
 })
 
 ------------------------------------------------------------
--- 13d) SHOP STOCK (Live)
+-- 13d) AUTO TASKS (Redeem Codes + Mail)
+------------------------------------------------------------
+
+local AutoTab = Window:Tab({ Title = "Auto Tasks", Icon = "list-checks" })
+
+-- ============ Redeem Codes ============
+AutoTab:Section({ Title = "Redeem Codes" })
+
+local REDEEM_CODES_FILE = "ntmthub_codes.txt"
+local redeemEnabled = false
+local redeemCodes = {}      -- list of strings
+local redeemInterval = 1800 -- 30 min loop
+
+if hasFs and isfile and isfile(REDEEM_CODES_FILE) then
+    local ok, data = pcall(readfile, REDEEM_CODES_FILE)
+    if ok and data then
+        for line in tostring(data):gmatch("[^\r\n]+") do
+            line = line:gsub("^%s+", ""):gsub("%s+$", "")
+            if #line > 0 then table.insert(redeemCodes, line) end
+        end
+    end
+end
+
+local function saveRedeemCodes()
+    if hasFs and writefile then
+        pcall(writefile, REDEEM_CODES_FILE, table.concat(redeemCodes, "\n"))
+    end
+end
+
+local function redeemAllCodes()
+    if not Networking or not Networking.Settings or not Networking.Settings.SubmitCode then
+        WindUI:Notify({ Title = "Redeem", Content = "Networking.Settings.SubmitCode khong ton tai!", Icon = "circle-x", Duration = 4 })
+        return
+    end
+    for i, code in ipairs(redeemCodes) do
+        pcall(function() Networking.Settings.SubmitCode:Fire(code) end)
+        print(("[NTMT HUB] Redeemed code: %s"):format(code))
+        if i < #redeemCodes then task.wait(0.5) end
+    end
+end
+
+pcall(function()
+    AutoTab:Input({
+        Title = "Them code (an Enter de them)",
+        Desc  = "Nhap 1 code roi an Enter. Code tu save vao file.",
+        Value = "",
+        InputIcon = "ticket",
+        Placeholder = "TEAMGREENBEAN",
+        Callback = function(v)
+            local code = tostring(v or ""):gsub("^%s+", ""):gsub("%s+$", "")
+            if #code == 0 then return end
+            -- Khong them trung
+            for _, c in ipairs(redeemCodes) do if c == code then return end end
+            table.insert(redeemCodes, code)
+            saveRedeemCodes()
+            WindUI:Notify({ Title = "Code added", Content = code .. " (" .. tostring(#redeemCodes) .. " codes total)", Icon = "plus", Duration = 3 })
+        end,
+    })
+end)
+
+AutoTab:Button({
+    Title = "Redeem TAT CA codes ngay",
+    Icon  = "send",
+    Callback = function()
+        if #redeemCodes == 0 then
+            WindUI:Notify({ Title = "Redeem", Content = "Chua co code nao!", Icon = "circle-x", Duration = 3 })
+            return
+        end
+        redeemAllCodes()
+        WindUI:Notify({ Title = "Redeem", Content = ("Da gui %d codes"):format(#redeemCodes), Icon = "check", Duration = 4 })
+    end
+})
+
+AutoTab:Toggle({
+    Title = "Auto Redeem (lap lai)",
+    Desc  = "Tu redeem tat ca code moi 30 phut",
+    Default = false,
+    Callback = function(v)
+        redeemEnabled = v
+        WindUI:Notify({ Title = "Auto Redeem", Content = v and "DA BAT" or "Da tat", Icon = v and "play" or "pause", Duration = 2 })
+    end
+})
+
+AutoTab:Button({
+    Title = "Xoa tat ca code",
+    Icon  = "trash-2",
+    Callback = function()
+        redeemCodes = {}
+        saveRedeemCodes()
+        WindUI:Notify({ Title = "Codes", Content = "Da xoa het", Icon = "trash-2", Duration = 2 })
+    end
+})
+
+AutoTab:Button({
+    Title = "Hien list codes (console)",
+    Icon  = "list",
+    Callback = function()
+        print("[NTMT HUB] Codes (" .. #redeemCodes .. "):")
+        for i, c in ipairs(redeemCodes) do print(("  %d. %s"):format(i, c)) end
+        WindUI:Notify({ Title = "Codes", Content = ("%d codes - xem F9"):format(#redeemCodes), Icon = "terminal", Duration = 3 })
+    end
+})
+
+-- Auto redeem loop
+task.spawn(function()
+    -- Redeem 1 lan ngay khi load script (sau 5s)
+    task.wait(5)
+    if #redeemCodes > 0 then pcall(redeemAllCodes) end
+    while true do
+        task.wait(redeemInterval)
+        if redeemEnabled and #redeemCodes > 0 then
+            pcall(redeemAllCodes)
+        end
+    end
+end)
+
+-- ============ Auto Mail ============
+AutoTab:Section({ Title = "Auto Mail (Gift)" })
+
+local mailEnabled = false
+local mailUsername = ""
+local mailNote = "gift"
+local mailItemsSeeds = {}    -- {SeedName = true}
+local mailItemsGears = {}    -- {GearName = true}
+local mailItemsPets  = {}    -- {PetName = true}
+local mailInterval = 60      -- giay
+local mailMaxPerSend = 25
+
+-- Lookup userId tu username
+local function lookupMailUserId(username)
+    if not Networking or not Networking.Mailbox or not Networking.Mailbox.LookupPlayer then return nil end
+    if type(username) ~= "string" or username == "" then return nil end
+    username = username:gsub("^%s*@?(.-)%s*$", "%1")
+    if username == "" then return nil end
+    local ok, userId = pcall(function() return Networking.Mailbox.LookupPlayer:Fire(username) end)
+    if not ok or type(userId) ~= "number" or userId <= 0 then return nil end
+    return userId
+end
+
+-- Build mail batch tu inventory (PlayerReplica.Data.Inventory)
+local function getInventoryBucket(category)
+    if not gearReplica or not gearReplica.Data or not gearReplica.Data.Inventory then return nil end
+    return gearReplica.Data.Inventory[category]
+end
+
+local function buildMailBatch()
+    local batch = {}
+    -- Seeds
+    for seedName, on in pairs(mailItemsSeeds) do
+        if on then
+            local bucket = getInventoryBucket("Seeds")
+            if bucket and bucket[seedName] and bucket[seedName] > 0 then
+                table.insert(batch, { Category = "Seeds", ItemKey = seedName, Count = bucket[seedName] })
+            end
+        end
+    end
+    -- Gears (Sprinklers + WateringCans go in their own categories)
+    for gearName, on in pairs(mailItemsGears) do
+        if on then
+            for _, cat in ipairs({ "Sprinklers", "WateringCans", "Trowels", "Flashbangs", "Crates", "SeedPacks" }) do
+                local bucket = getInventoryBucket(cat)
+                if bucket and bucket[gearName] and bucket[gearName] > 0 then
+                    table.insert(batch, { Category = cat, ItemKey = gearName, Count = bucket[gearName] })
+                    break
+                end
+            end
+        end
+    end
+    -- Pets
+    for petName, on in pairs(mailItemsPets) do
+        if on then
+            local bucket = getInventoryBucket("Pets")
+            if bucket and bucket[petName] and bucket[petName] > 0 then
+                table.insert(batch, { Category = "Pets", ItemKey = petName, Count = bucket[petName] })
+            end
+        end
+    end
+    return batch
+end
+
+local function trySendMail()
+    if not Networking or not Networking.Mailbox or not Networking.Mailbox.SendBatch then
+        WindUI:Notify({ Title = "Mail", Content = "Networking.Mailbox khong ton tai!", Icon = "circle-x", Duration = 4 })
+        return false
+    end
+    if mailUsername == "" then return false end
+    local uid = lookupMailUserId(mailUsername)
+    if not uid then
+        warn("[NTMT HUB] Mail: khong tim thay user " .. mailUsername)
+        return false
+    end
+    local batch = buildMailBatch()
+    if #batch == 0 then return false end
+    -- Chia chunks neu vuot mailMaxPerSend
+    local sent = 0
+    local chunk, chunkTotal = {}, 0
+    for _, item in ipairs(batch) do
+        local remaining = item.Count
+        while remaining > 0 do
+            local take = math.min(remaining, mailMaxPerSend - chunkTotal)
+            table.insert(chunk, { Category = item.Category, ItemKey = item.ItemKey, Count = take })
+            chunkTotal = chunkTotal + take
+            remaining = remaining - take
+            if chunkTotal >= mailMaxPerSend then
+                local ok, success = pcall(function() return Networking.Mailbox.SendBatch:Fire(uid, chunk, mailNote) end)
+                if ok and success == true then sent = sent + chunkTotal end
+                chunk, chunkTotal = {}, 0
+                task.wait(2)
+            end
+        end
+    end
+    if #chunk > 0 then
+        local ok, success = pcall(function() return Networking.Mailbox.SendBatch:Fire(uid, chunk, mailNote) end)
+        if ok and success == true then sent = sent + chunkTotal end
+    end
+    if sent > 0 then
+        WindUI:Notify({ Title = "Mail sent", Content = ("Da gui %d item -> %s"):format(sent, mailUsername), Icon = "check", Duration = 4 })
+    end
+    return sent > 0
+end
+
+pcall(function()
+    AutoTab:Input({
+        Title = "Username nguoi nhan",
+        Desc  = "Nhap username (khong dau @)",
+        Value = "",
+        InputIcon = "user",
+        Placeholder = "Roblox username",
+        Callback = function(v) mailUsername = tostring(v or ""):gsub("^%s+", ""):gsub("%s+$", "") end,
+    })
+end)
+
+pcall(function()
+    AutoTab:Input({
+        Title = "Note (loi nhan kem)",
+        Value = "gift",
+        InputIcon = "message-square",
+        Placeholder = "gift",
+        Callback = function(v) mailNote = tostring(v or "gift") end,
+    })
+end)
+
+pcall(function()
+    AutoTab:Dropdown({
+        Title = "Chon Seed de gui",
+        Values = SEEDS_LIST,
+        Value = nil,
+        Multi = true,
+        AllowNone = true,
+        Callback = function(sel)
+            mailItemsSeeds = {}
+            if type(sel) == "table" then
+                for k, v in pairs(sel) do
+                    if type(v) == "string" then mailItemsSeeds[v] = true
+                    elseif type(k) == "string" and v then mailItemsSeeds[k] = true end
+                end
+            end
+        end
+    })
+end)
+
+pcall(function()
+    AutoTab:Dropdown({
+        Title = "Chon Gear de gui",
+        Values = GEARS_LIST,
+        Value = nil,
+        Multi = true,
+        AllowNone = true,
+        Callback = function(sel)
+            mailItemsGears = {}
+            if type(sel) == "table" then
+                for k, v in pairs(sel) do
+                    if type(v) == "string" then mailItemsGears[v] = true
+                    elseif type(k) == "string" and v then mailItemsGears[k] = true end
+                end
+            end
+        end
+    })
+end)
+
+pcall(function()
+    AutoTab:Dropdown({
+        Title = "Chon Pet de gui",
+        Values = PET_LIST,
+        Value = nil,
+        Multi = true,
+        AllowNone = true,
+        Callback = function(sel)
+            mailItemsPets = {}
+            if type(sel) == "table" then
+                for k, v in pairs(sel) do
+                    if type(v) == "string" then mailItemsPets[v] = true
+                    elseif type(k) == "string" and v then mailItemsPets[k] = true end
+                end
+            end
+        end
+    })
+end)
+
+AutoTab:Button({
+    Title = "Gui mail ngay",
+    Icon  = "send",
+    Callback = function()
+        if mailUsername == "" then
+            WindUI:Notify({ Title = "Mail", Content = "Nhap username truoc!", Icon = "circle-x", Duration = 3 })
+            return
+        end
+        local ok = trySendMail()
+        if not ok then
+            WindUI:Notify({ Title = "Mail", Content = "Gui that bai - check username + co item trong inventory khong", Icon = "circle-x", Duration = 5 })
+        end
+    end
+})
+
+AutoTab:Toggle({
+    Title = "Auto Mail (lap lai)",
+    Desc  = "Tu gui mail moi 60 giay neu co item",
+    Default = false,
+    Callback = function(v)
+        mailEnabled = v
+        WindUI:Notify({ Title = "Auto Mail", Content = v and "DA BAT" or "Da tat", Icon = v and "play" or "pause", Duration = 2 })
+    end
+})
+
+-- Auto mail loop
+task.spawn(function()
+    while true do
+        task.wait(mailInterval)
+        if mailEnabled then pcall(trySendMail) end
+    end
+end)
+
+------------------------------------------------------------
+-- 13e) SHOP STOCK (Live)
 ------------------------------------------------------------
 
 local ShopTab = Window:Tab({ Title = "Shop Stock", Icon = "shopping-bag" })
@@ -2575,57 +3118,62 @@ task.spawn(function()
     end
 end)
 
--- Auto Buy Pet
+-- Auto Buy Pet (Net.Pets.WildPetTame)
 task.spawn(function()
     while true do
-        task.wait(petInterval)
-        if genv.ftgs_AutoBuyPet then
+        task.wait(petCatchInterval)
+        if genv.ftgs_AutoBuyPet and not isCatchingPet then
             pcall(function()
-                local pets = getBuyablePets()
-                local myRoot = getRoot(LocalPlayer)
-                local origCF = myRoot and myRoot.CFrame
-                local boughtAny = false
-                for _, petInfo in ipairs(pets) do
+                local spawns = getWildPetSpawns()
+                if not spawns then return end
+                for _, model in ipairs(spawns:GetChildren()) do
                     if not genv.ftgs_AutoBuyPet then break end
-                    if BuyAllPets or PetWhitelist[petInfo.petName] then
-                        if buyPet(petInfo) then boughtAny = true end
-                        task.wait(0.1)
+                    if model:IsA("Model") then
+                        local species = model:GetAttribute("PetName") or model.Name
+                        local wanted = false
+                        if BuyAllPets then
+                            wanted = true
+                        else
+                            for petName, on in pairs(PetWhitelist) do
+                                if on and matchesPetName(species, petName) then
+                                    wanted = true
+                                    break
+                                end
+                            end
+                        end
+                        if wanted then
+                            local ref = resolveRefPartFromModel(model)
+                            if ref and isRefTameable(ref) then
+                                isCatchingPet = true
+                                catchWildPet(model, ref)
+                                isCatchingPet = false
+                                task.wait(0.2)
+                            end
+                        end
                     end
-                end
-                if boughtAny and origCF and myRoot then
-                    pcall(function() myRoot.CFrame = origCF end)
                 end
             end)
         end
     end
 end)
 
--- Auto Plant: equip seed tu inventory roi plant
+-- Auto Plant: equip seed tu inventory (SeedTool attr) roi plant
 task.spawn(function()
     while true do
         task.wait(plantInterval)
         if genv.ftgs_AutoPlant then
             pcall(function()
-                local invTools = getInventorySeedTools()
-                local tools = {}
+                local seedNames = {}
                 if PlantAll then
-                    tools = invTools
+                    seedNames = getInventorySeedNames()
                 else
-                    -- Match wiki seed name -> tool trong inventory
-                    for seedName, enabled in pairs(PlantWhitelist) do
-                        if enabled then
-                            for _, t in ipairs(invTools) do
-                                if isToolMatchSeed(t.Name, seedName) then
-                                    table.insert(tools, t)
-                                    break
-                                end
-                            end
-                        end
+                    for s, on in pairs(PlantWhitelist) do
+                        if on then table.insert(seedNames, s) end
                     end
                 end
-                for _, tool in ipairs(tools) do
+                for _, seedName in ipairs(seedNames) do
                     if not genv.ftgs_AutoPlant then break end
-                    plantOneSeed(tool)
+                    plantOneSeed(seedName)
                     task.wait(0.05)
                 end
             end)
@@ -2639,12 +3187,28 @@ task.spawn(function()
         task.wait(collectInterval)
         if genv.ftgs_AutoCollectRainbowGold or genv.ftgs_AutoCollectItemDrop then
             pcall(function()
-                for _, item in ipairs(Services.Workspace:GetDescendants()) do
-                    if not (genv.ftgs_AutoCollectRainbowGold or genv.ftgs_AutoCollectItemDrop) then break end
-                    if genv.ftgs_AutoCollectRainbowGold and isRainbowGoldSeed(item) then
-                        fireCollect(item)
-                    elseif genv.ftgs_AutoCollectItemDrop and isItemDrop(item) then
-                        fireCollect(item)
+                -- Uu tien quet SeedPackSpawns truoc (chinh xac va nhanh hon)
+                if genv.ftgs_AutoCollectRainbowGold then
+                    local folder = getSeedPackFolder()
+                    if folder then
+                        for _, spawn in ipairs(folder:GetChildren()) do
+                            if not genv.ftgs_AutoCollectRainbowGold then break end
+                            local isR = spawn:GetAttribute("RainbowSeed") == true
+                            local isG = spawn:GetAttribute("GoldSeed") == true
+                            if isR or isG then
+                                local prompt = spawn:FindFirstChildWhichIsA("ProximityPrompt", true)
+                                if prompt then
+                                    fireCollect(spawn)
+                                end
+                            end
+                        end
+                    end
+                end
+                -- Quet workspace cho item drop (cham hon vi descendants)
+                if genv.ftgs_AutoCollectItemDrop then
+                    for _, item in ipairs(Services.Workspace:GetDescendants()) do
+                        if not genv.ftgs_AutoCollectItemDrop then break end
+                        if isItemDrop(item) then fireCollect(item) end
                     end
                 end
             end)
@@ -2761,44 +3325,20 @@ InfoTab:Button({
     Icon  = "search",
     Callback = function()
         print("=== AUTO PLANT DIAGNOSTIC ===")
-        cachedPlantPacket = nil
-        cachedPlantPacketName = nil
-        cachedPlantRemote = nil
-        local pkt = findPlantPacket()
-        local rem = findPlantRemote()
-        print("Plant Packet:", cachedPlantPacketName or "NIL")
-        print("Plant Remote:", rem and rem:GetFullName() or "NIL")
-
-        print("-- Networking categories chua chu 'plant' --")
-        if Networking then
-            for catName, cat in pairs(Networking) do
-                if type(cat) == "table" then
-                    for fnName, fn in pairs(cat) do
-                        local fl = string.lower(tostring(fnName))
-                        if fl:find("plant") or fl:find("place") then
-                            print(("  Networking.%s.%s = %s"):format(catName, fnName, type(fn)))
-                        end
-                    end
-                end
+        print("Networking.Plant:", Networking and Networking.Plant or "NIL")
+        if Networking and Networking.Plant then
+            for fnName, fn in pairs(Networking.Plant) do
+                print(("  Networking.Plant.%s = %s"):format(fnName, type(fn)))
             end
         end
+        cachePlantPositions()
+        print("Plant areas count:", #savedPlantPositions)
+        print("PlotId:", getPlotIdAttribute())
 
-        print("-- ReplicatedStorage remote chua chu 'plant' --")
-        for _, obj in ipairs(Services.ReplicatedStorage:GetDescendants()) do
-            if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
-                local n = obj.Name:lower()
-                if n:find("plant") or n:find("place") then
-                    print(("  %s [%s]"):format(obj:GetFullName(), obj.ClassName))
-                end
-            end
-        end
-
-        print("-- Inventory seed tools --")
-        local seeds = getInventorySeedTools()
-        for _, t in ipairs(seeds) do
-            print(("  Tool: %s (parent: %s)"):format(t.Name, t.Parent and t.Parent.Name or "?"))
-        end
-        if #seeds == 0 then print("  (KHONG co seed nao trong inventory)") end
+        print("-- Inventory seed tools (SeedTool attr) --")
+        local names = getInventorySeedNames()
+        for _, n in ipairs(names) do print("  " .. n) end
+        if #names == 0 then print("  (KHONG co seed - inventory rong)") end
 
         WindUI:Notify({ Title = "Plant Diagnostic", Content = "Xem F9 console", Icon = "terminal", Duration = 4 })
     end
@@ -2807,29 +3347,18 @@ InfoTab:Button({
 InfoTab:Button({
     Title = "Test plant 1 lan ngay",
     Icon  = "zap",
-    Desc  = "Tim seed dau tien trong inventory, equip va fire 1 lan",
+    Desc  = "Lay seed dau tien trong inventory + plant 1 lan",
     Callback = function()
-        local invTools = getInventorySeedTools()
-        local picked = invTools[1]
-        for _, t in ipairs(invTools) do
-            if t.Name:lower():find("carrot") then picked = t; break end
-        end
-        if not picked then
+        local names = getInventorySeedNames()
+        if #names == 0 then
             WindUI:Notify({ Title = "Test Plant", Content = "Khong co seed trong inventory!", Icon = "circle-x", Duration = 4 })
             return
         end
-        print(("[NTMT HUB] Test plant tool: %s"):format(picked.Name))
-        if not equipTool(picked) then
-            WindUI:Notify({ Title = "Test Plant", Content = "Equip that bai!", Icon = "circle-x", Duration = 3 })
-            return
-        end
-        local hrp = getRoot(LocalPlayer)
-        if not hrp then return end
-        local seedName = picked.Name:gsub(" Seed", ""):gsub("Seed$", ""):match("^%s*(.-)%s*$")
-        local ok = firePlant(hrp.Position, seedName)
+        local seed = names[1]
+        local ok = plantOneSeed(seed)
         WindUI:Notify({
             Title = "Test Plant",
-            Content = ok and ("Fired plant " .. seedName) or "Fire that bai - khong tim duoc remote",
+            Content = ok and ("Da plant " .. seed) or "That bai - check console F9",
             Icon = ok and "check" or "circle-x",
             Duration = 4,
         })
