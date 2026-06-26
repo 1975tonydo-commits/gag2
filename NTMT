@@ -1079,8 +1079,18 @@ GAGTab:Section({ Title = "Auto Buy Seed & Gear" })
 
 GAGTab:Toggle({
     Title = "Auto Buy Seed",
+    Desc  = "BAT cai nay (khong phai 'Mua TAT CA')",
     Default = false,
-    Callback = function(s) genv.ftgs_AutoBuySeed = s end
+    Callback = function(s)
+        genv.ftgs_AutoBuySeed = s
+        print("[NTMT HUB] AutoBuySeed =", s)
+        WindUI:Notify({
+            Title = "Auto Buy Seed",
+            Content = s and "DA BAT" or "Da tat",
+            Icon = s and "play" or "pause",
+            Duration = 2,
+        })
+    end
 })
 
 GAGTab:Toggle({
@@ -1114,8 +1124,18 @@ end)
 
 GAGTab:Toggle({
     Title = "Auto Buy Gear",
+    Desc  = "BAT cai nay (khong phai 'Mua TAT CA')",
     Default = false,
-    Callback = function(s) genv.ftgs_AutoBuyGear = s end
+    Callback = function(s)
+        genv.ftgs_AutoBuyGear = s
+        print("[NTMT HUB] AutoBuyGear =", s)
+        WindUI:Notify({
+            Title = "Auto Buy Gear",
+            Content = s and "DA BAT" or "Da tat",
+            Icon = s and "play" or "pause",
+            Duration = 2,
+        })
+    end
 })
 
 GAGTab:Toggle({
@@ -1145,6 +1165,27 @@ pcall(function()
         end
     })
 end)
+
+GAGTab:Button({
+    Title = "BAT TAT CA Auto Buy (test nhanh)",
+    Desc  = "Click de bat ca Auto Buy Seed + Auto Buy Gear + Debug Buy",
+    Icon  = "zap",
+    Callback = function()
+        genv.ftgs_AutoBuySeed = true
+        genv.ftgs_AutoBuyGear = true
+        Config.DebugBuy = true
+        print("[NTMT HUB] BAT TAT CA Auto Buy via button")
+        WindUI:Notify({
+            Title = "Auto Buy",
+            Content = "DA BAT TAT CA (Seed + Gear + Debug)",
+            Icon = "rocket",
+            Duration = 4,
+        })
+        -- Chay sweep ngay 1 lan
+        task.spawn(function() pcall(buySeedSweep) end)
+        task.spawn(function() pcall(buyGearSweep) end)
+    end
+})
 
 GAGTab:Toggle({
     Title = "Debug Buy (in console)",
