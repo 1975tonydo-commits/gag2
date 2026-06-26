@@ -1,6 +1,8 @@
 --[[
     NTMT HUB - Grow a Garden 2
-    Combined: Original NTMT + Auto Plant (All/Select) + Anti-Steal Defense + Auto Buy (All/Select)
+    Hỗ trợ: Delta X, Codex, Hydrogen, Arceus X, Fluxus, Synapse X, Krnl, Wave,
+            VegaX, Solara, Xeno, Velocity, Electron, Trigon, JJsploit, ...
+    Nền tảng: iOS / Android / PC / VNG / Mac
 ]]
 
 ------------------------------------------------------------
@@ -14,14 +16,19 @@ local Executor = (identifyexecutor and identifyexecutor()) or
 local cloneref = cloneref or clonereference or function(o) return o end
 
 local function universalHttpGet(url)
-    local ok, body = pcall(function() return game:HttpGet(url) end)
+    local ok, body = pcall(function()
+        return game:HttpGet(url)
+    end)
     if ok and body and #body > 0 then return body end
+
     local req = (syn and syn.request) or (http and http.request) or http_request or request or (fluxus and fluxus.request)
     if req then
         local res = req({ Url = url, Method = "GET" })
-        if res and (res.Body or res.body) then return res.Body or res.body end
+        if res and (res.Body or res.body) then
+            return res.Body or res.body
+        end
     end
-    error("No HTTP function available on: " .. tostring(Executor))
+    error("Không có HTTP function nào khả dụng trên executor: " .. tostring(Executor))
 end
 
 local hasFs = (writefile and readfile and isfile) ~= nil
@@ -39,7 +46,7 @@ do
     if ok and lib then
         WindUI = lib
     else
-        warn("[WindUI] Falling back to main_example.lua")
+        warn("[WindUI] Không tải được dist/main.lua, dùng main_example.lua dự phòng")
         loadstring(universalHttpGet("https://raw.githubusercontent.com/Footagesus/WindUI/refs/heads/main/main_example.lua"))()
         return
     end
@@ -58,7 +65,7 @@ local Services = {
 }
 
 local LocalPlayer = Services.Players.LocalPlayer
-local Gardens     = Services.Workspace:WaitForChild("Gardens", 10)
+local Gardens = Services.Workspace:WaitForChild("Gardens", 10)
 
 local Networking, FruitValueCalc
 do
@@ -93,36 +100,27 @@ local Window = WindUI:CreateWindow({
         Draggable = true,
         OnlyMobile = false,
         Scale = 0.5,
-        Color = ColorSequence.new(Color3.fromHex("#30FF6A"), Color3.fromHex("#e7ff2f")),
+        Color = ColorSequence.new(
+            Color3.fromHex("#30FF6A"),
+            Color3.fromHex("#e7ff2f")
+        ),
     },
-    Topbar = { Height = 44, ButtonsType = "Mac" },
+    Topbar = {
+        Height = 44,
+        ButtonsType = "Mac",
+    },
 })
 
-Window:Tag({ Title = "v" .. (WindUI.Version or "?"), Icon = "github",       Color = Color3.fromHex("#1c1c1c"), Border = true })
-Window:Tag({ Title = Executor,                        Icon = "cpu",          Color = Color3.fromHex("#257AF7"), Border = true })
-Window:Tag({ Title = Networking and "Net OK" or "Net FAIL", Icon = Networking and "check" or "x",
-             Color = Networking and Color3.fromHex("#10C550") or Color3.fromHex("#EF4F1D"), Border = true })
+Window:Tag({ Title = "v" .. (WindUI.Version or "?"), Icon = "github", Color = Color3.fromHex("#1c1c1c"), Border = true })
+Window:Tag({ Title = Executor, Icon = "cpu", Color = Color3.fromHex("#257AF7"), Border = true })
+if Networking then
+    Window:Tag({ Title = "Networking OK", Icon = "check", Color = Color3.fromHex("#10C550"), Border = true })
+else
+    Window:Tag({ Title = "Networking FAIL", Icon = "x", Color = Color3.fromHex("#EF4F1D"), Border = true })
+end
 
 ------------------------------------------------------------
--- 5) GLOBAL STATE FLAGS
-------------------------------------------------------------
-
-genv.ftgs_AutoHarvest     = false
-genv.ftgs_AutoSell        = false
-genv.ftgs_AutoSteal       = false
-genv.ftgs_AntiAFK         = false
-genv.ftgs_HarvestInfRange = false
-genv.ftgs_AutoBuySeed     = false
-genv.ftgs_AutoBuyGear     = false
-genv.ftgs_AutoCollect     = false
-genv.ftgs_AutoPlant       = false
--- NEW
-genv.ftgs_AutoPlantAll    = false
-genv.ftgs_AutoPlantSelect = false
-genv.ftgs_AntiStealDef    = false
-
-------------------------------------------------------------
--- 6) HELPERS
+-- 5) HELPERS - Plot / Plants / Player
 ------------------------------------------------------------
 
 local function getHumanoid(player)
@@ -133,17 +131,6 @@ end
 local function getRoot(player)
     local hum = getHumanoid(player)
     return hum and hum.RootPart
-end
-
-local function getPartFromObj(obj)
-    if not obj then return nil end
-    if obj:IsA("BasePart") then return obj end
-    if obj:IsA("Model") then
-        return obj.PrimaryPart
-            or obj:FindFirstChild("HarvestPart")
-            or obj:FindFirstChildWhichIsA("BasePart", true)
-    end
-    return obj:FindFirstChildWhichIsA("BasePart", true)
 end
 
 local function getOwnedPlot()
@@ -165,7 +152,9 @@ local function getCachedOwnedPlot()
 end
 
 task.spawn(function()
-    while task.wait(10) do cachedOwnedPlot = getOwnedPlot() end
+    while task.wait(10) do
+        cachedOwnedPlot = getOwnedPlot()
+    end
 end)
 
 local harvestRipeOnly = true
@@ -182,6 +171,7 @@ local function getAllPlantsInPlot()
     if not plot then return out end
     local plantsFolder = plot:FindFirstChild("Plants")
     if not plantsFolder then return out end
+
     for _, plant in ipairs(plantsFolder:GetChildren()) do
         local fruitsFolder = plant:FindFirstChild("Fruits")
         if fruitsFolder then
@@ -203,229 +193,16 @@ end
 
 local getHarvestablePlants = getAllPlantsInPlot
 
-local function isNightTime()
-    local Night = Services.ReplicatedStorage:FindFirstChild("Night")
-    return Night and Night.Value == true
+local function getPartFromObj(obj)
+    if not obj then return nil end
+    if obj:IsA("BasePart") then return obj end
+    if obj:IsA("Model") then
+        return obj.PrimaryPart
+            or obj:FindFirstChild("HarvestPart")
+            or obj:FindFirstChildWhichIsA("BasePart", true)
+    end
+    return obj:FindFirstChildWhichIsA("BasePart", true)
 end
-
-------------------------------------------------------------
--- 7) SEEDS & GEARS DATA (Full lists from wiki)
-------------------------------------------------------------
-
-local SEEDS_LIST = {
-    { name = "Carrot",          rarity = "Common",    cost = 1 },
-    { name = "Strawberry",      rarity = "Common",    cost = 10 },
-    { name = "Blueberry",       rarity = "Common",    cost = 25 },
-    { name = "Tulip",           rarity = "Uncommon",  cost = 40 },
-    { name = "Tomato",          rarity = "Uncommon",  cost = 200 },
-    { name = "Apple",           rarity = "Uncommon",  cost = 400 },
-    { name = "Bamboo",          rarity = "Rare",      cost = 700 },
-    { name = "Corn",            rarity = "Rare",      cost = 2500 },
-    { name = "Cactus",          rarity = "Rare",      cost = 5000 },
-    { name = "Pineapple",       rarity = "Rare",      cost = 10000 },
-    { name = "Mushroom",        rarity = "Epic",      cost = 15000 },
-    { name = "GreenBean",       rarity = "Epic",      cost = 20000 },
-    { name = "Banana",          rarity = "Epic",      cost = 30000 },
-    { name = "Grape",           rarity = "Epic",      cost = 50000 },
-    { name = "Coconut",         rarity = "Epic",      cost = 70000 },
-    { name = "Mango",           rarity = "Epic",      cost = 300000 },
-    { name = "DragonFruit",     rarity = "Legendary", cost = 120000 },
-    { name = "Acorn",           rarity = "Legendary", cost = 700000 },
-    { name = "Cherry",          rarity = "Legendary", cost = 1200000 },
-    { name = "Sunflower",       rarity = "Legendary", cost = 5000000 },
-    { name = "VenusFlytrap",    rarity = "Mythic",    cost = 7000000 },
-    { name = "Pomegranate",     rarity = "Mythic",    cost = 12000000 },
-    { name = "PoisonApple",     rarity = "Mythic",    cost = 25000000 },
-    { name = "MoonBloom",       rarity = "Super",     cost = 65000000 },
-    { name = "DragonBreath",    rarity = "Super",     cost = 90000000 },
-}
-
-local GEARS_LIST = {
-    { name = "CommonWateringCan",   rarity = "Common",    cost = 2000 },
-    { name = "CommonSprinkler",     rarity = "Common",    cost = 3000 },
-    { name = "Sign",                rarity = "Common",    cost = 4000 },
-    { name = "UncommonSprinkler",   rarity = "Uncommon",  cost = 10000 },
-    { name = "Trowel",              rarity = "Rare",      cost = 1000 },
-    { name = "RareSprinkler",       rarity = "Rare",      cost = 50000 },
-    { name = "JumpMushroom",        rarity = "Rare",      cost = 1800 },
-    { name = "SpeedMushroom",       rarity = "Rare",      cost = 1500 },
-    { name = "Lantern",             rarity = "Common",    cost = 12000 },
-    { name = "ShrinkMushroom",      rarity = "Epic",      cost = 4500 },
-    { name = "SupersizeMushroom",   rarity = "Epic",      cost = 4500 },
-    { name = "Gnome",               rarity = "Epic",      cost = 50000 },
-    { name = "Flashbang",           rarity = "Epic",      cost = 8000 },
-    { name = "BasicPot",            rarity = "Epic",      cost = 60000 },
-    { name = "LegendarySprinkler",  rarity = "Legendary", cost = 100000 },
-    { name = "InvisibilityMushroom",rarity = "Legendary", cost = 18000 },
-    { name = "Teleporter",          rarity = "Legendary", cost = 18000 },
-    { name = "Wheelbarrow",         rarity = "Legendary", cost = 500000 },
-    { name = "SuperWateringCan",    rarity = "Super",     cost = 250000 },
-    { name = "SuperSprinkler",      rarity = "Super",     cost = 300000 },
-}
-
-------------------------------------------------------------
--- 8) BUY REMOTES
-------------------------------------------------------------
-
-local BUY_SEED_NAMES     = { "BuySeedStock","Buy_Seed","BuySeed","PurchaseSeedStock","PurchaseSeed","BuySeed_RE" }
-local BUY_GEAR_NAMES     = { "BuyGearStock","Buy_Gear","BuyGear","PurchaseGearStock","PurchaseGear","BuyGear_RE" }
-local BUY_SEED_NET_PATHS = {
-    {"Shop","BuySeedStock"},{"Shop","BuySeed"},{"Shop","Buy_Seed"},{"Shop","BuySeed_RE"},
-    {"Garden","BuySeed"},{"Garden","BuySeedStock"},{"Garden","Buy_Seed"},
-}
-local BUY_GEAR_NET_PATHS = {
-    {"Shop","BuyGearStock"},{"Shop","BuyGear"},{"Shop","Buy_Gear"},{"Shop","BuyGear_RE"},
-    {"Garden","BuyGear"},{"Garden","BuyGearStock"},{"Garden","Buy_Gear"},
-}
-
-local function fireOne(rem, name)
-    if not rem then return false end
-    if rem:IsA("RemoteEvent") then
-        return pcall(function() rem:FireServer(name) end)
-    elseif rem:IsA("RemoteFunction") then
-        return pcall(function() rem:InvokeServer(name) end)
-    end
-    return false
-end
-
-local function bruteForceBuy(name, remoteNames, netPaths)
-    local fired = 0
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    if GE then
-        for _, n in ipairs(remoteNames) do
-            local r = GE:FindFirstChild(n)
-            if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then
-                if fireOne(r, name) then fired += 1 end
-            end
-        end
-    end
-    if Networking then
-        for _, path in ipairs(netPaths) do
-            local cat = Networking[path[1]]
-            local fn  = cat and cat[path[2]]
-            if fn and type(fn) == "table" and fn.Fire then
-                if pcall(function() fn:Fire(name) end) then fired += 1 end
-            end
-        end
-    end
-    return fired
-end
-
-local function buySeed(name, amount)
-    for _ = 1, (amount or 1) do
-        bruteForceBuy(name, BUY_SEED_NAMES, BUY_SEED_NET_PATHS)
-    end
-end
-
-local function buyGear(name, amount)
-    for _ = 1, (amount or 1) do
-        bruteForceBuy(name, BUY_GEAR_NAMES, BUY_GEAR_NET_PATHS)
-    end
-end
-
-------------------------------------------------------------
--- 9) PLANT REMOTE
-------------------------------------------------------------
-
-local PLANT_REMOTE_NAMES = { "Plant_RE","PlantSeed","PlantSeed_RE","Plant","PlaceSeed","PlantItem" }
-local cachedPlantRemote  = nil
-
-local function findPlantRemote()
-    if cachedPlantRemote and cachedPlantRemote.Parent then return cachedPlantRemote end
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    if GE then
-        for _, n in ipairs(PLANT_REMOTE_NAMES) do
-            local r = GE:FindFirstChild(n)
-            if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then
-                cachedPlantRemote = r; return r
-            end
-        end
-    end
-    for _, obj in ipairs(Services.ReplicatedStorage:GetDescendants()) do
-        if (obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction")) then
-            local n = obj.Name:lower()
-            if n:find("plant") and not n:find("plantid") then
-                cachedPlantRemote = obj; return obj
-            end
-        end
-    end
-    return nil
-end
-
-local function firePlant(position, seedName)
-    local rem = findPlantRemote()
-    if rem then
-        if rem:IsA("RemoteEvent") then
-            pcall(function() rem:FireServer(position, seedName) end)
-            pcall(function() rem:FireServer(seedName, position) end)
-            pcall(function() rem:FireServer(position) end)
-        else
-            pcall(function() rem:InvokeServer(position, seedName) end)
-        end
-        return true
-    end
-    if Networking then
-        for _, path in ipairs({ {"Garden","Plant"},{"Garden","PlantSeed"},{"Plant","Plant"} }) do
-            local fn = (Networking[path[1]] or {})[path[2]]
-            if fn and fn.Fire then
-                pcall(function() fn:Fire(position, seedName) end)
-                return true
-            end
-        end
-    end
-    return false
-end
-
--- Get seeds from Backpack
-local function getSeedsInBackpack()
-    local seeds = {}
-    local bp = LocalPlayer:FindFirstChild("Backpack")
-    if bp then
-        for _, tool in ipairs(bp:GetChildren()) do
-            if tool:IsA("Tool") then
-                local n = tool.Name:lower()
-                if n:find("seed") then table.insert(seeds, tool) end
-            end
-        end
-    end
-    -- Also check character (equipped tool)
-    local char = LocalPlayer.Character
-    if char then
-        local tool = char:FindFirstChildOfClass("Tool")
-        if tool and tool.Name:lower():find("seed") then
-            table.insert(seeds, tool)
-        end
-    end
-    return seeds
-end
-
-local function getEquippedSeedName()
-    local char = LocalPlayer.Character
-    if not char then return nil end
-    local tool = char:FindFirstChildOfClass("Tool")
-    if not tool then return nil end
-    local n = tool.Name:gsub(" Seed",""):gsub("Seed",""):match("^%s*(.-)%s*$")
-    return n, tool
-end
-
--- Get empty plots in player's garden
-local function getEmptyPlots()
-    local plots = {}
-    local plot = getCachedOwnedPlot()
-    if not plot then return plots end
-    local plotsFolder = plot:FindFirstChild("Plots") or plot:FindFirstChild("FarmPlots") or plot
-    for _, v in ipairs(plotsFolder:GetDescendants()) do
-        if v.Name == "Plot" or v.Name == "FarmPlot" or v:HasTag("Plot") then
-            local isEmpty = not v:FindFirstChild("Plant") and not v:GetAttribute("Planted")
-            if isEmpty then table.insert(plots, v) end
-        end
-    end
-    return plots
-end
-
-------------------------------------------------------------
--- 10) HARVEST LOGIC (from original)
-------------------------------------------------------------
 
 local function harvestPlant(plant)
     if not plant or not Networking then return false end
@@ -447,22 +224,113 @@ local function harvestPlantInfRange(plant, returnCFrame)
         task.wait()
     end
     local ok = harvestPlant(plant)
-    if returnCFrame then pcall(function() hrp.CFrame = returnCFrame end) end
+    if returnCFrame then
+        pcall(function() hrp.CFrame = returnCFrame end)
+    end
     return ok
 end
 
 ------------------------------------------------------------
--- 11) SELL LOGIC (from original)
+-- 6) UI - AUTO HARVEST
 ------------------------------------------------------------
+
+genv.ftgs_AutoHarvest     = false
+genv.ftgs_AutoSell        = false
+genv.ftgs_AutoSteal       = false
+genv.ftgs_AntiAFK         = false
+genv.ftgs_HarvestInfRange = false
+genv.ftgs_AutoBuySeed     = false
+genv.ftgs_AutoBuyGear     = false
+genv.ftgs_AutoCollect     = false
+genv.ftgs_AutoPlant       = false
+
+local GAGTab = Window:Tab({ Title = "Grow a Garden 2", Icon = "sprout" })
+
+GAGTab:Section({ Title = "Auto Harvest" })
+
+local harvestInterval = 0.15
+
+GAGTab:Toggle({
+    Title = "Auto Harvest",
+    Desc  = "Tự thu hoạch fruit chín",
+    Default = false,
+    Callback = function(state)
+        genv.ftgs_AutoHarvest = state
+        WindUI:Notify({
+            Title = "Auto Harvest",
+            Content = state and "Đã bật" or "Đã tắt",
+            Icon = state and "play" or "pause",
+            Duration = 2,
+        })
+    end
+})
+
+GAGTab:Toggle({
+    Title = "Chỉ harvest fruit ĐÃ CHÍN",
+    Desc  = "BẬT (khuyên dùng): giảm spam lỗi console",
+    Default = true,
+    Callback = function(v) harvestRipeOnly = v end
+})
+
+GAGTab:Toggle({
+    Title = "Infinite Range (TP tới fruit)",
+    Desc  = "BẬT: TP tới từng fruit -> harvest -> TP về. Work ở cuối map.",
+    Default = false,
+    Callback = function(state) genv.ftgs_HarvestInfRange = state end
+})
+
+GAGTab:Slider({
+    Title = "Tốc độ Harvest (giây)",
+    Step  = 0.05,
+    Value = { Min = 0.05, Max = 2, Default = 0.15 },
+    Callback = function(v) harvestInterval = v end
+})
+
+GAGTab:Button({
+    Title = "Harvest 1 lần ngay",
+    Icon  = "zap",
+    Callback = function()
+        local total, ok = 0, 0
+        local hrp = getRoot(LocalPlayer)
+        local origCF = hrp and hrp.CFrame
+        for _, plant in ipairs(getHarvestablePlants()) do
+            total = total + 1
+            if genv.ftgs_HarvestInfRange then
+                if harvestPlantInfRange(plant, nil) then ok = ok + 1 end
+            else
+                if harvestPlant(plant) then ok = ok + 1 end
+            end
+        end
+        if genv.ftgs_HarvestInfRange and origCF and hrp then
+            pcall(function() hrp.CFrame = origCF end)
+        end
+        WindUI:Notify({
+            Title = "Manual Harvest",
+            Content = ("Đã harvest %d/%d fruit"):format(ok, total),
+            Icon = "circle-check",
+            Duration = 3,
+        })
+    end
+})
+
+------------------------------------------------------------
+-- 7) UI - AUTO SELL
+------------------------------------------------------------
+
+GAGTab:Section({ Title = "Auto Sell" })
 
 local sellInterval = 0.1
 local sellInfRange = false
-local SELL_REMOTE_NAMES = { "Sell_Inventory","SellInventory","Sell_All","SellAll","SellItems" }
-local SELL_NETWORKING_PATHS = {
-    {"Sell","Sell"},{"Sell","SellAll"},{"Sell","SellInventory"},
-    {"Garden","Sell"},{"Garden","SellAll"},{"Garden","SellInventory"},
-    {"Inventory","Sell"},{"Inventory","SellAll"},
+
+local SELL_REMOTE_NAMES = {
+    "Sell_Inventory", "SellInventory", "Sell_All", "SellAll", "SellItems",
 }
+local SELL_NETWORKING_PATHS = {
+    { "Sell", "Sell" }, { "Sell", "SellAll" }, { "Sell", "SellInventory" },
+    { "Garden", "Sell" }, { "Garden", "SellAll" }, { "Garden", "SellInventory" },
+    { "Inventory", "Sell" }, { "Inventory", "SellAll" },
+}
+
 local cachedSellRemotes  = {}
 local cachedSellNetworks = {}
 local cachedSellCFrame   = nil
@@ -483,7 +351,8 @@ local function rebuildSellCache()
         if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
             for _, name in ipairs(SELL_REMOTE_NAMES) do
                 if obj.Name == name and not table.find(cachedSellRemotes, obj) then
-                    table.insert(cachedSellRemotes, obj); break
+                    table.insert(cachedSellRemotes, obj)
+                    break
                 end
             end
         end
@@ -504,10 +373,10 @@ local function findSellStandCFrame()
     if cachedSellCFrame then return cachedSellCFrame end
     for _, obj in ipairs(Services.Workspace:GetDescendants()) do
         local name = obj.Name:lower()
-        if name:find("sell") and (obj:IsA("BasePart") or obj:IsA("Model")) then
+        if (name:find("sell") and (obj:IsA("BasePart") or obj:IsA("Model"))) then
             local prompt = obj:FindFirstChildWhichIsA("ProximityPrompt", true)
             if prompt then
-                local part = getPartFromObj(obj)
+                local part = getPartFromObj(obj) or (prompt.Parent and prompt.Parent:IsA("BasePart") and prompt.Parent)
                 if part then
                     cachedSellCFrame = part.CFrame + Vector3.new(0, 3, 0)
                     return cachedSellCFrame
@@ -553,21 +422,109 @@ local function sellInventory()
     return true
 end
 
+GAGTab:Toggle({
+    Title = "Auto Sell",
+    Default = false,
+    Callback = function(state)
+        genv.ftgs_AutoSell = state
+        WindUI:Notify({
+            Title = "Auto Sell",
+            Content = state and "Đã bật" or "Đã tắt",
+            Icon = state and "play" or "pause",
+            Duration = 2,
+        })
+    end
+})
+
+GAGTab:Toggle({
+    Title = "Infinite Range (TP tới Sell Stand)",
+    Desc  = "BẬT: TP tới sell stand -> bán -> TP về.",
+    Default = false,
+    Callback = function(state)
+        sellInfRange = state
+        if state then
+            cachedSellCFrame = nil
+            local cf = findSellStandCFrame()
+            WindUI:Notify({
+                Title = "Sell Stand",
+                Content = cf and "Đã tìm thấy Sell Stand" or "Không tự dò được - dùng nút 'Lưu vị trí'",
+                Icon = cf and "circle-check" or "circle-x",
+                Duration = 3,
+            })
+        end
+    end
+})
+
+GAGTab:Button({
+    Title = "Lưu vị trí hiện tại làm Sell Stand",
+    Icon  = "map-pin",
+    Callback = function()
+        local hrp = getRoot(LocalPlayer)
+        if hrp then
+            cachedSellCFrame = hrp.CFrame
+            if hasFs then
+                pcall(function() writefile("ntmthub_sell_cf.txt", tostring(hrp.CFrame)) end)
+            end
+            WindUI:Notify({ Title = "Sell Stand", Content = "Đã lưu vị trí hiện tại", Icon = "circle-check", Duration = 2 })
+        end
+    end
+})
+
+if hasFs then
+    pcall(function()
+        if isfile("ntmthub_sell_cf.txt") then
+            local data = readfile("ntmthub_sell_cf.txt")
+            local nums = {}
+            for n in tostring(data):gmatch("[-%d%.]+") do
+                table.insert(nums, tonumber(n))
+            end
+            if #nums >= 12 then
+                cachedSellCFrame = CFrame.new(unpack(nums))
+            end
+        end
+    end)
+end
+
+GAGTab:Slider({
+    Title = "Tốc độ Sell (giây)",
+    Step  = 0.05,
+    Value = { Min = 0.05, Max = 5, Default = 0.1 },
+    Callback = function(v) sellInterval = v end
+})
+
+GAGTab:Button({
+    Title = "Sell All ngay",
+    Icon  = "dollar-sign",
+    Callback = function()
+        sellInventory()
+        WindUI:Notify({ Title = "Sell All", Content = "Đã gửi lệnh bán", Icon = "circle-check", Duration = 2 })
+    end
+})
+
 ------------------------------------------------------------
--- 12) STEAL LOGIC (from original)
+-- 8) UI - AUTO STEAL AT NIGHT
 ------------------------------------------------------------
+
+GAGTab:Section({ Title = "Auto Steal (Night Only)" })
+
+local function isNightTime()
+    local Night = Services.ReplicatedStorage:FindFirstChild("Night")
+    return Night and Night.Value == true
+end
 
 local function plotUnlocked(player)
     local plot = nil
     for _, p in ipairs(Gardens:GetChildren()) do
-        if p:GetAttribute("OwnerUserId") == player.UserId then plot = p; break end
+        if p:GetAttribute("OwnerUserId") == player.UserId then plot = p break end
     end
     if not plot then return true end
     local visual = plot:FindFirstChild("Visual")
     local area = visual and visual:FindFirstChild("PlotSizeReferenceVisual")
     if not area then return true end
     for _, touching in ipairs(Services.Workspace:GetPartBoundsInBox(area.CFrame, area.Size)) do
-        if player.Character and touching:IsDescendantOf(player.Character) then return false end
+        if player.Character and touching:IsDescendantOf(player.Character) then
+            return false
+        end
     end
     return true
 end
@@ -585,7 +542,7 @@ local function getMostValuableSteal()
     local bestValue, bestItem = 0, nil
     for _, plot in ipairs(Gardens:GetChildren()) do
         local ownerId = plot:GetAttribute("OwnerUserId")
-        local owner   = ownerId and Services.Players:GetPlayerByUserId(ownerId)
+        local owner = ownerId and Services.Players:GetPlayerByUserId(ownerId)
         if owner and owner ~= LocalPlayer then
             local hum = getHumanoid(owner)
             if not (hum and hum.Sit) then
@@ -597,11 +554,15 @@ local function getMostValuableSteal()
                         if fruits then
                             for _, fr in ipairs(fruits:GetChildren()) do
                                 local hp = fr:FindFirstChild("HarvestPart")
-                                if hp and hp:FindFirstChild("StealPrompt") then table.insert(candidates, fr) end
+                                if hp and hp:FindFirstChild("StealPrompt") then
+                                    table.insert(candidates, fr)
+                                end
                             end
                         else
                             local hp = plant:FindFirstChild("HarvestPart")
-                            if hp and hp:FindFirstChild("StealPrompt") then table.insert(candidates, plant) end
+                            if hp and hp:FindFirstChild("StealPrompt") then
+                                table.insert(candidates, plant)
+                            end
                         end
                         for _, c in ipairs(candidates) do
                             local v = calculateValue(c)
@@ -617,8 +578,8 @@ end
 
 local function returnToOwnPlot()
     local myPlot = getOwnedPlot()
-    local ref    = myPlot and myPlot:FindFirstChild("PlotSizeReference")
-    local root   = getRoot(LocalPlayer)
+    local ref = myPlot and myPlot:FindFirstChild("PlotSizeReference")
+    local root = getRoot(LocalPlayer)
     if ref and root then
         for _ = 1, 5 do
             pcall(function() root.CFrame = ref.CFrame end)
@@ -628,12 +589,12 @@ local function returnToOwnPlot()
 end
 
 local function flingPlayer(player)
-    local root  = getRoot(LocalPlayer)
-    local hum   = getHumanoid(LocalPlayer)
+    local root = getRoot(LocalPlayer)
+    local hum  = getHumanoid(LocalPlayer)
     local _root = getRoot(player)
     local _hum  = getHumanoid(player)
     if not (root and hum and _root and _hum) then return end
-    local oldPos  = root.CFrame
+    local oldPos = root.CFrame
     local flinging = true
     task.spawn(function()
         local m = 0.1
@@ -676,10 +637,10 @@ local function stealFruit(fruit)
     local hp = fruit:FindFirstChild("HarvestPart")
     local sp = hp and hp:FindFirstChild("StealPrompt")
     if not sp then return false end
-    local userId  = tonumber(fruit:GetAttribute("UserId"))
+    local userId = tonumber(fruit:GetAttribute("UserId"))
     local plantId = fruit:GetAttribute("PlantId")
     local fruitId = fruit:GetAttribute("FruitId") or ""
-    local owner   = userId and Services.Players:GetPlayerByUserId(userId)
+    local owner = userId and Services.Players:GetPlayerByUserId(userId)
     if owner and not plotUnlocked(owner) then pcall(flingPlayer, owner) end
     local root = getRoot(LocalPlayer)
     if not root then return false end
@@ -692,36 +653,408 @@ local function stealFruit(fruit)
     return true
 end
 
+local stealReturnAfter = true
+
+GAGTab:Toggle({
+    Title = "Auto Steal (chỉ vào ban đêm)",
+    Default = false,
+    Callback = function(state)
+        genv.ftgs_AutoSteal = state
+        WindUI:Notify({
+            Title = "Auto Steal",
+            Content = state and "Đã bật (đợi đêm)" or "Đã tắt",
+            Icon = state and "play" or "pause",
+            Duration = 2,
+        })
+    end
+})
+
+GAGTab:Toggle({
+    Title = "Quay về plot sau mỗi đợt steal",
+    Default = true,
+    Callback = function(v) stealReturnAfter = v end
+})
+
+GAGTab:Button({
+    Title = "Test Steal 1 fruit",
+    Icon  = "swords",
+    Callback = function()
+        if not isNightTime() then
+            WindUI:Notify({ Title = "Chưa được", Content = "Chỉ steal được vào ban đêm", Icon = "moon", Duration = 3 })
+            return
+        end
+        local target, val = getMostValuableSteal()
+        if not target then
+            WindUI:Notify({ Title = "Không có target", Content = "Không tìm thấy fruit để steal", Icon = "circle-x", Duration = 3 })
+            return
+        end
+        local ok = stealFruit(target)
+        if stealReturnAfter then returnToOwnPlot() end
+        WindUI:Notify({
+            Title = ok and "Steal" or "Lỗi",
+            Content = ok and ("Steal: %s (value %s)"):format(target.Name, tostring(val)) or "Steal thất bại",
+            Icon = ok and "circle-check" or "circle-x",
+            Duration = 3,
+        })
+    end
+})
+
 ------------------------------------------------------------
--- 13) ANTI-STEAL DEFENSE (NEW)
+-- 9) AUTO BUY SEED & GEAR (Packet binary protocol - GAG2 thật sự)
 ------------------------------------------------------------
 
--- Check if a player is inside our garden boundary
-local function isInMyGarden(player)
-    if player == LocalPlayer then return false end
-    local char = player.Character
-    if not char then return false end
-    local hrp = char:FindFirstChild("HumanoidRootPart")
-    if not hrp then return false end
-    local myPlot = getCachedOwnedPlot()
-    if not myPlot then return false end
-    -- Use bounding box of the plot
-    local ok, cf, size = pcall(function() return myPlot:GetBoundingBox() end)
-    if not ok then return false end
-    local diff = hrp.Position - cf.Position
-    return math.abs(diff.X) <= (size.X / 2 + 5)
-       and math.abs(diff.Z) <= (size.Z / 2 + 5)
+-- GAG2 dùng SharedModules.Packet.RemoteEvent với buffer:
+--   buffer.fromstring(prefix .. "\x00" .. char(#name) .. name)
+-- Prefix: "j" = Seed, "n" = Gear
+
+local PacketRemoteEvent = nil
+pcall(function()
+    local sm = Services.ReplicatedStorage:WaitForChild("SharedModules", 5)
+    if sm then
+        local pkt = sm:WaitForChild("Packet", 5)
+        if pkt then
+            PacketRemoteEvent = pkt:WaitForChild("RemoteEvent", 5)
+        end
+    end
+end)
+
+local SHOPS = {
+    Seeds = { stockFolder = {"StockValues","SeedShop","Items"}, restockPath = {"StockValues","SeedShop","UnixNextRestock"}, prefix = "j" },
+    Gears = { stockFolder = {"StockValues","GearShop","Items"}, restockPath = {"StockValues","GearShop","UnixNextRestock"}, prefix = "n" },
+}
+
+local function resolvePath(parts)
+    local node = Services.ReplicatedStorage
+    for _, seg in ipairs(parts) do
+        node = node:FindFirstChild(seg)
+        if not node then return nil end
+    end
+    return node
 end
 
--- Equip shovel from backpack
-local function equipShovel()
-    local bp = LocalPlayer:FindFirstChild("Backpack")
-    if not bp then return false end
-    for _, tool in ipairs(bp:GetChildren()) do
-        if tool:IsA("Tool") and tool.Name:lower():find("shovel") then
-            local hum = getHumanoid(LocalPlayer)
-            if hum then
-                hum:EquipTool(tool)
+local function getStock(shopKey, itemName)
+    local folder = resolvePath(SHOPS[shopKey].stockFolder)
+    if not folder then return 0 end
+    local v = folder:FindFirstChild(itemName)
+    return v and (v.Value or 0) or 0
+end
+
+local function getUnixNextRestock(shopKey)
+    local v = resolvePath(SHOPS[shopKey].restockPath)
+    return v and v.Value or nil
+end
+
+local function getAllItemNames(shopKey)
+    local names = {}
+    local folder = resolvePath(SHOPS[shopKey].stockFolder)
+    if not folder then return names end
+    for _, child in ipairs(folder:GetChildren()) do
+        if child:IsA("IntValue") or child:IsA("NumberValue") then
+            table.insert(names, child.Name)
+        end
+    end
+    table.sort(names)
+    return names
+end
+
+local function makeBuyBuffer(prefix, itemName)
+    return buffer.fromstring(prefix .. "\x00" .. string.char(#itemName) .. itemName)
+end
+
+local function firePacketBuy(shopKey, itemName)
+    if not PacketRemoteEvent then return false end
+    local prefix = SHOPS[shopKey].prefix
+    local ok = pcall(function()
+        PacketRemoteEvent:FireServer(makeBuyBuffer(prefix, itemName))
+    end)
+    return ok
+end
+
+-- Load danh sách động từ StockValues (chính xác 100% với game)
+local SEEDS_LIST = getAllItemNames("Seeds")
+local GEARS_LIST = getAllItemNames("Gears")
+-- Fallback nếu game chưa load StockValues
+if #SEEDS_LIST == 0 then
+    SEEDS_LIST = {
+        "Carrot","Strawberry","Blueberry","Tulip","Tomato","Apple","Bamboo",
+        "Corn","Cactus","Pineapple","Mushroom","GreenBean","Banana","Grape",
+        "Coconut","Mango","Acorn","Cherry","Sunflower","Lotus","Pomegranate",
+        "PoisonApple","DragonFruit","HornedMelon","BabyCactus","GlowMushroom",
+        "VenusFlytrap","GhostPepper","MoonBloom","VenomSpitter","DragonBreath",
+    }
+end
+if #GEARS_LIST == 0 then
+    GEARS_LIST = {
+        "CommonWateringCan","CommonSprinkler","Sign","UncommonSprinkler",
+        "RareSprinkler","Trowel","BasicTrap","AdvancedShovel","JumpMushroom",
+        "SpeedMushroom","SuperWateringCan","LegendarySprinkler","PowerHose",
+        "FreezeRay","VineWrapper","RainbowCarpet","Gnome","Wheelbarrow",
+    }
+end
+
+local selectedSeeds = {}
+local selectedGears = {}
+local buyAllSeeds = true
+local buyAllGears = true
+local buyAmount   = 10
+local buyInterval = 1.5
+
+-- Mua dựa trên Stock thật sự (giống logic gốc):
+-- Đọc StockValues.SeedShop.Items.<Name>.Value → fire số lần đúng bằng stock
+local function buyShopItem(shopKey, itemName, maxAmount)
+    if not PacketRemoteEvent then return 0 end
+    local stock = getStock(shopKey, itemName)
+    local toBuy = maxAmount and math.min(stock, maxAmount) or stock
+    if toBuy <= 0 then return 0 end
+    local bought = 0
+    for i = 1, toBuy do
+        if firePacketBuy(shopKey, itemName) then
+            bought = bought + 1
+        end
+        task.wait(0.05)
+    end
+    return bought
+end
+
+local function buySeed(name, amount)
+    return buyShopItem("Seeds", name, amount) > 0
+end
+
+local function buyGear(name, amount)
+    return buyShopItem("Gears", name, amount) > 0
+end
+
+GAGTab:Section({ Title = "Auto Buy Seed & Gear" })
+
+GAGTab:Toggle({
+    Title = "Auto Buy Seed",
+    Desc  = "Mua ngay khi bật + mua tự động mỗi lần restock",
+    Default = false,
+    Callback = function(s)
+        genv.ftgs_AutoBuySeed = s
+        if s then
+            if not PacketRemoteEvent then
+                WindUI:Notify({ Title = "Lỗi", Content = "Packet RemoteEvent không tồn tại", Icon = "circle-x", Duration = 4 })
+                return
+            end
+            task.spawn(buyAllSeedStockNow)
+            WindUI:Notify({ Title = "Auto Buy Seed", Content = "Đang mua stock hiện có...", Icon = "play", Duration = 2 })
+        else
+            WindUI:Notify({ Title = "Auto Buy Seed", Content = "Đã tắt", Icon = "pause", Duration = 2 })
+        end
+    end
+})
+
+GAGTab:Toggle({
+    Title = "Mua TẤT CẢ Seed (BẬT = mua hết loại)",
+    Default = true,
+    Callback = function(v) buyAllSeeds = v end
+})
+
+pcall(function()
+    GAGTab:Dropdown({
+        Title = "Chọn Seed (khi 'Mua TẤT CẢ Seed' = OFF)",
+        Values = SEEDS_LIST,
+        Value = nil,
+        Multi = true,
+        AllowNone = true,
+        Callback = function(sel)
+            selectedSeeds = {}
+            if type(sel) == "table" then
+                for k, v in pairs(sel) do
+                    if type(v) == "string" then selectedSeeds[v] = true
+                    elseif type(k) == "string" and v then selectedSeeds[k] = true end
+                end
+            elseif type(sel) == "string" then
+                selectedSeeds[sel] = true
+            end
+        end
+    })
+end)
+
+GAGTab:Toggle({
+    Title = "Auto Buy Gear",
+    Desc  = "Mua ngay khi bật + mua tự động mỗi lần restock",
+    Default = false,
+    Callback = function(s)
+        genv.ftgs_AutoBuyGear = s
+        if s then
+            if not PacketRemoteEvent then
+                WindUI:Notify({ Title = "Lỗi", Content = "Packet RemoteEvent không tồn tại", Icon = "circle-x", Duration = 4 })
+                return
+            end
+            task.spawn(buyAllGearStockNow)
+            WindUI:Notify({ Title = "Auto Buy Gear", Content = "Đang mua stock hiện có...", Icon = "play", Duration = 2 })
+        else
+            WindUI:Notify({ Title = "Auto Buy Gear", Content = "Đã tắt", Icon = "pause", Duration = 2 })
+        end
+    end
+})
+
+GAGTab:Toggle({
+    Title = "Mua TẤT CẢ Gear (BẬT = mua hết loại)",
+    Default = true,
+    Callback = function(v) buyAllGears = v end
+})
+
+pcall(function()
+    GAGTab:Dropdown({
+        Title = "Chọn Gear (khi 'Mua TẤT CẢ Gear' = OFF)",
+        Values = GEARS_LIST,
+        Value = nil,
+        Multi = true,
+        AllowNone = true,
+        Callback = function(sel)
+            selectedGears = {}
+            if type(sel) == "table" then
+                for k, v in pairs(sel) do
+                    if type(v) == "string" then selectedGears[v] = true
+                    elseif type(k) == "string" and v then selectedGears[k] = true end
+                end
+            elseif type(sel) == "string" then
+                selectedGears[sel] = true
+            end
+        end
+    })
+end)
+
+-- Note: số lượng = stock thật của shop, tự auto-detect. Không cần slider số lượng.
+
+GAGTab:Button({
+    Title = "Mua TẤT CẢ STOCK HIỆN CÓ (1 lần)",
+    Icon  = "shopping-cart",
+    Callback = function()
+        if not PacketRemoteEvent then
+            WindUI:Notify({ Title = "Lỗi", Content = "Không tìm thấy Packet RemoteEvent!", Icon = "circle-x", Duration = 4 })
+            return
+        end
+        local seedBought, gearBought = 0, 0
+        for _, s in ipairs(SEEDS_LIST) do
+            if buyAllSeeds or selectedSeeds[s] then
+                seedBought = seedBought + buyShopItem("Seeds", s)
+            end
+        end
+        for _, g in ipairs(GEARS_LIST) do
+            if buyAllGears or selectedGears[g] then
+                gearBought = gearBought + buyShopItem("Gears", g)
+            end
+        end
+        WindUI:Notify({
+            Title = "Mua xong",
+            Content = ("Seeds: %d | Gears: %d"):format(seedBought, gearBought),
+            Icon = "circle-check",
+            Duration = 4,
+        })
+    end
+})
+
+GAGTab:Button({
+    Title = "Debug: Stock hiện tại + Restock timer",
+    Icon  = "search",
+    Callback = function()
+        print("===== STOCK STATUS =====")
+        print("PacketRemoteEvent:", PacketRemoteEvent and "OK" or "MISSING!")
+        print("--- Seeds ---")
+        for _, s in ipairs(SEEDS_LIST) do
+            local st = getStock("Seeds", s)
+            if st > 0 then print(("  %s: %d"):format(s, st)) end
+        end
+        print("--- Gears ---")
+        for _, g in ipairs(GEARS_LIST) do
+            local st = getStock("Gears", g)
+            if st > 0 then print(("  %s: %d"):format(g, st)) end
+        end
+        local seedRestock = getUnixNextRestock("Seeds")
+        local gearRestock = getUnixNextRestock("Gears")
+        local now = os.time()
+        if seedRestock then
+            print(("Seeds restock in: %ds"):format(math.max(0, seedRestock - now)))
+        end
+        if gearRestock then
+            print(("Gears restock in: %ds"):format(math.max(0, gearRestock - now)))
+        end
+        print("========================")
+        WindUI:Notify({
+            Title = "Stock (xem console F9)",
+            Content = ("Packet: %s | Seeds list: %d | Gears list: %d"):format(
+                PacketRemoteEvent and "OK" or "MISSING",
+                #SEEDS_LIST, #GEARS_LIST
+            ),
+            Icon = "info",
+            Duration = 6,
+        })
+    end
+})
+
+------------------------------------------------------------
+-- 10) AUTO PLANT (auto detect remote)
+------------------------------------------------------------
+
+GAGTab:Section({ Title = "Auto Plant" })
+
+local plantInterval = 0.5
+local plantMode     = "Below"
+local plantSpacing  = 6
+local cachedPlantRemote = nil
+
+-- CONFIRMED từ source: GameEvents.Plant_RE:FireServer(Position, "SeedName")
+local PLANT_REMOTE_NAMES = {
+    "Plant_RE", "PlantSeed", "PlantSeed_RE", "Plant", "PlaceSeed", "PlantItem",
+}
+
+local function findPlantRemote()
+    if cachedPlantRemote and cachedPlantRemote.Parent then return cachedPlantRemote end
+    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
+    if GE then
+        for _, n in ipairs(PLANT_REMOTE_NAMES) do
+            local r = GE:FindFirstChild(n)
+            if r and (r:IsA("RemoteEvent") or r:IsA("RemoteFunction")) then
+                cachedPlantRemote = r
+                return r
+            end
+        end
+    end
+    -- Quét toàn bộ ReplicatedStorage
+    for _, obj in ipairs(Services.ReplicatedStorage:GetDescendants()) do
+        if obj:IsA("RemoteEvent") or obj:IsA("RemoteFunction") then
+            local n = obj.Name:lower()
+            if n:find("plant") and not n:find("plantid") then
+                cachedPlantRemote = obj
+                return obj
+            end
+        end
+    end
+    return nil
+end
+
+local function getEquippedSeedName()
+    local char = LocalPlayer.Character
+    if not char then return nil end
+    local tool = char:FindFirstChildOfClass("Tool")
+    if not tool then return nil end
+    -- Roblox tool name thường là "Carrot Seed" hoặc "Carrot"
+    local n = tool.Name
+    n = n:gsub(" Seed", ""):gsub("Seed", "")
+    return n:match("^%s*(.-)%s*$"), tool
+end
+
+local function firePlant(position, seedName)
+    local rem = findPlantRemote()
+    if rem then
+        if rem:IsA("RemoteEvent") then
+            pcall(function() rem:FireServer(position, seedName) end)
+            pcall(function() rem:FireServer(seedName, position) end)
+            pcall(function() rem:FireServer(position) end)
+        else
+            pcall(function() rem:InvokeServer(position, seedName) end)
+        end
+        return true
+    end
+    if Networking then
+        for _, path in ipairs({ {"Garden","Plant"}, {"Garden","PlantSeed"}, {"Plant","Plant"} }) do
+            local fn = (Networking[path[1]] or {})[path[2]]
+            if fn and fn.Fire then
+                pcall(function() fn:Fire(position, seedName) end)
                 return true
             end
         end
@@ -729,45 +1062,101 @@ local function equipShovel()
     return false
 end
 
--- Hit stealer using tool activation
-local function hitStealer(target)
-    local char = LocalPlayer.Character
-    if not char then return end
-    local tool = char:FindFirstChildOfClass("Tool")
-    if not tool then return end
-    -- TP close to target then activate
-    local tRoot = getRoot(target)
-    local myRoot = getRoot(LocalPlayer)
-    if tRoot and myRoot then
-        pcall(function()
-            myRoot.CFrame = tRoot.CFrame + Vector3.new(0, 1, 2)
-        end)
-        task.wait(0.1)
-    end
-    -- Try all tool activation methods
-    pcall(function() tool:Activate() end)
-    local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-    if GE then
-        for _, rem in ipairs(GE:GetChildren()) do
-            local n = rem.Name:lower()
-            if n:find("hit") or n:find("attack") or n:find("shovel") then
-                if rem:IsA("RemoteEvent") then
-                    pcall(function() rem:FireServer(target.Character) end)
-                end
+GAGTab:Toggle({
+    Title = "Auto Plant",
+    Desc  = "Cần cầm seed (tool) - tự trồng quanh vị trí đang đứng",
+    Default = false,
+    Callback = function(state)
+        genv.ftgs_AutoPlant = state
+        if state then
+            local rem = findPlantRemote()
+            if not rem then
+                WindUI:Notify({ Title = "Plant Remote", Content = "Không tìm được Plant remote!", Icon = "circle-x", Duration = 4 })
             end
         end
+        WindUI:Notify({
+            Title = "Auto Plant",
+            Content = state and "Đã bật" or "Đã tắt",
+            Icon = state and "play" or "pause",
+            Duration = 2,
+        })
     end
-end
+})
+
+pcall(function()
+    GAGTab:Dropdown({
+        Title = "Chế độ Plant",
+        Values = { "Below", "Line", "Circle" },
+        Value = "Below",
+        Multi = false,
+        Callback = function(v)
+            if type(v) == "table" then v = v[1] or v[next(v)] end
+            plantMode = v or "Below"
+        end
+    })
+end)
+
+GAGTab:Slider({
+    Title = "Khoảng cách giữa các plant (studs)",
+    Step  = 1,
+    Value = { Min = 3, Max = 20, Default = 6 },
+    Callback = function(v) plantSpacing = v end
+})
+
+GAGTab:Slider({
+    Title = "Tốc độ Plant (giây)",
+    Step  = 0.1,
+    Value = { Min = 0.2, Max = 3, Default = 0.5 },
+    Callback = function(v) plantInterval = v end
+})
+
+GAGTab:Button({
+    Title = "Plant 1 lần ngay",
+    Icon  = "sprout",
+    Callback = function()
+        local hrp = getRoot(LocalPlayer)
+        local seed, tool = getEquippedSeedName()
+        if not hrp or not seed then
+            WindUI:Notify({ Title = "Auto Plant", Content = "Chưa cầm seed (tool)", Icon = "circle-x", Duration = 3 })
+            return
+        end
+        firePlant(hrp.Position, seed)
+        WindUI:Notify({ Title = "Plant", Content = "Đã fire plant: " .. seed, Icon = "circle-check", Duration = 2 })
+    end
+})
+
+GAGTab:Button({
+    Title = "Debug: Tìm Plant remote",
+    Icon  = "search",
+    Callback = function()
+        cachedPlantRemote = nil
+        local rem = findPlantRemote()
+        if rem then
+            WindUI:Notify({ Title = "Plant Remote", Content = "Tìm thấy: " .. rem:GetFullName(), Icon = "circle-check", Duration = 6 })
+            print("[NTMT HUB] Plant remote:", rem:GetFullName())
+        else
+            WindUI:Notify({ Title = "Plant Remote", Content = "Không tìm thấy", Icon = "circle-x", Duration = 5 })
+        end
+    end
+})
 
 ------------------------------------------------------------
--- 14) AUTO COLLECT (from original)
+-- 11) AUTO COLLECT DROPS
 ------------------------------------------------------------
 
-local collectInterval   = 0.4
-local collectReturn     = true
-local collectMaxRange   = 250
-local collectKeywords   = { gold=true, rainbow=true, legend=false, mythic=false, special=false, drop=true }
-local DROP_FOLDER_NAMES = { "Drops","DroppedItems","Items","Pickups","WorldDrops","Loot" }
+GAGTab:Section({ Title = "Auto Collect Drops" })
+
+local collectInterval = 0.4
+local collectReturn   = true
+local collectMaxRange = 250
+local collectKeywords = {
+    gold = true, rainbow = true, legend = false,
+    mythic = false, special = false, drop = true,
+}
+
+local DROP_FOLDER_NAMES = {
+    "Drops", "DroppedItems", "Items", "Pickups", "WorldDrops", "Loot",
+}
 
 local function findDropFolders()
     local result = {}
@@ -807,10 +1196,13 @@ local function collectItem(item, prompt)
     if not hrp then return end
     local root = getPartFromObj(item)
     if not root then return end
-    if (root.Position - hrp.Position).Magnitude > collectMaxRange then return end
+    local dist = (root.Position - hrp.Position).Magnitude
+    if dist > collectMaxRange then return end
     pcall(function() hrp.CFrame = CFrame.new(root.Position + Vector3.new(0, 3, 0)) end)
     task.wait(0.06)
-    if prompt and fireproximityprompt then pcall(fireproximityprompt, prompt, 0) end
+    if prompt and fireproximityprompt then
+        pcall(fireproximityprompt, prompt, 0)
+    end
 end
 
 local function scanDrops()
@@ -820,23 +1212,91 @@ local function scanDrops()
         for _, folder in ipairs(folders) do
             for _, item in ipairs(folder:GetChildren()) do
                 local ok, prompt = isValidDrop(item)
-                if ok then table.insert(drops, { item=item, prompt=prompt }) end
+                if ok then table.insert(drops, { item = item, prompt = prompt }) end
             end
         end
     else
         for _, item in ipairs(Services.Workspace:GetChildren()) do
             if item:IsA("Model") or item:IsA("Tool") or item:IsA("BasePart") then
                 local ok, prompt = isValidDrop(item)
-                if ok then table.insert(drops, { item=item, prompt=prompt }) end
+                if ok then table.insert(drops, { item = item, prompt = prompt }) end
             end
         end
     end
     return drops
 end
 
+GAGTab:Toggle({
+    Title = "Auto Collect Drops",
+    Desc  = "Chỉ collect item có ProximityPrompt Pickup/Collect (bỏ qua plant)",
+    Default = false,
+    Callback = function(state)
+        genv.ftgs_AutoCollect = state
+        WindUI:Notify({
+            Title = "Auto Collect",
+            Content = state and "Đã bật" or "Đã tắt",
+            Icon = state and "play" or "pause",
+            Duration = 2,
+        })
+    end
+})
+
+GAGTab:Slider({
+    Title = "Chu kỳ Auto Collect (giây)",
+    Step  = 0.05,
+    Value = { Min = 0.2, Max = 3, Default = 0.4 },
+    Callback = function(v) collectInterval = v end
+})
+
+GAGTab:Slider({
+    Title = "Khoảng cách tối đa (studs)",
+    Step  = 10,
+    Value = { Min = 50, Max = 1000, Default = 250 },
+    Callback = function(v) collectMaxRange = v end
+})
+
+GAGTab:Toggle({
+    Title = "Quay về vị trí cũ sau khi collect",
+    Default = true,
+    Callback = function(v) collectReturn = v end
+})
+
+for _, kw in ipairs({ "gold", "rainbow", "legend", "mythic", "special", "drop" }) do
+    local keyword = kw
+    GAGTab:Toggle({
+        Title = "Collect '" .. keyword .. "'",
+        Default = collectKeywords[keyword] == true,
+        Callback = function(v) collectKeywords[keyword] = v end
+    })
+end
+
+GAGTab:Button({
+    Title = "Quét & Collect 1 lần ngay",
+    Icon  = "package",
+    Callback = function()
+        local hrp = getRoot(LocalPlayer)
+        local orig = hrp and hrp.CFrame
+        local drops = scanDrops()
+        for _, d in ipairs(drops) do
+            collectItem(d.item, d.prompt)
+        end
+        if collectReturn and orig and hrp then
+            pcall(function() hrp.CFrame = orig end)
+        end
+        WindUI:Notify({
+            Title = "Auto Collect",
+            Content = ("Tìm thấy %d drop"):format(#drops),
+            Icon = #drops > 0 and "circle-check" or "info",
+            Duration = 2,
+        })
+    end
+})
+
 ------------------------------------------------------------
--- 15) PLAYER CONTROL (from original)
+-- 12) PLAYER CONTROL (Speed / Jump, persist qua respawn)
 ------------------------------------------------------------
+
+GAGTab:Section({ Title = "Player Control" })
 
 local desiredWalkSpeed = 16
 local desiredJumpPower = 50
@@ -846,8 +1306,8 @@ local function applyMovement()
     if not hum then return end
     pcall(function()
         hum.UseJumpPower = true
-        hum.WalkSpeed  = desiredWalkSpeed
-        hum.JumpPower  = desiredJumpPower
+        hum.WalkSpeed = desiredWalkSpeed
+        hum.JumpPower = desiredJumpPower
         hum.JumpHeight = desiredJumpPower * 0.5
     end)
 end
@@ -858,6 +1318,7 @@ LocalPlayer.CharacterAdded:Connect(function(char)
     applyMovement()
 end)
 
+-- Loop bảo đảm WalkSpeed/JumpPower không bị reset bởi script khác
 task.spawn(function()
     while task.wait(0.5) do
         local hum = getHumanoid(LocalPlayer)
@@ -875,459 +1336,44 @@ task.spawn(function()
     end
 end)
 
-------------------------------------------------------------
--- 16) UI TABS
-------------------------------------------------------------
-
--- ===================== TAB: GAG2 MAIN =====================
-local GAGTab = Window:Tab({ Title = "Grow a Garden 2", Icon = "sprout" })
-
--- ---- AUTO HARVEST ----
-GAGTab:Section({ Title = "Auto Harvest" })
-local harvestInterval = 0.15
-
-GAGTab:Toggle({
-    Title = "Auto Harvest",
-    Desc  = "Auto collect ripe fruit",
-    Default = false,
-    Callback = function(state)
-        genv.ftgs_AutoHarvest = state
-        WindUI:Notify({ Title="Auto Harvest", Content=state and "ON" or "OFF", Icon=state and "play" or "pause", Duration=2 })
-    end
-})
-GAGTab:Toggle({
-    Title = "Ripe Only",
-    Desc  = "Only harvest fully grown (recommended)",
-    Default = true,
-    Callback = function(v) harvestRipeOnly = v end
-})
-GAGTab:Toggle({
-    Title = "Infinite Range (TP to fruit)",
-    Default = false,
-    Callback = function(state) genv.ftgs_HarvestInfRange = state end
-})
 GAGTab:Slider({
-    Title = "Harvest Speed (sec)",
-    Step  = 0.05,
-    Value = { Min=0.05, Max=2, Default=0.15 },
-    Callback = function(v) harvestInterval = v end
-})
-GAGTab:Button({
-    Title = "Harvest Now",
-    Icon  = "zap",
-    Callback = function()
-        local total, ok = 0, 0
-        local hrp   = getRoot(LocalPlayer)
-        local origCF = hrp and hrp.CFrame
-        for _, plant in ipairs(getHarvestablePlants()) do
-            total += 1
-            if genv.ftgs_HarvestInfRange then
-                if harvestPlantInfRange(plant, nil) then ok += 1 end
-            else
-                if harvestPlant(plant) then ok += 1 end
-            end
-        end
-        if genv.ftgs_HarvestInfRange and origCF and hrp then
-            pcall(function() hrp.CFrame = origCF end)
-        end
-        WindUI:Notify({ Title="Manual Harvest", Content=("Harvested %d/%d"):format(ok, total), Icon="circle-check", Duration=3 })
-    end
-})
-
--- ---- AUTO SELL ----
-GAGTab:Section({ Title = "Auto Sell" })
-
-GAGTab:Toggle({
-    Title = "Auto Sell",
-    Default = false,
-    Callback = function(state)
-        genv.ftgs_AutoSell = state
-        WindUI:Notify({ Title="Auto Sell", Content=state and "ON" or "OFF", Icon=state and "play" or "pause", Duration=2 })
-    end
-})
-GAGTab:Toggle({
-    Title = "Infinite Range (TP to Sell Stand)",
-    Default = false,
-    Callback = function(state)
-        sellInfRange = state
-        if state then
-            cachedSellCFrame = nil
-            local cf = findSellStandCFrame()
-            WindUI:Notify({
-                Title="Sell Stand",
-                Content=cf and "Found Sell Stand" or "Not found - use Save Position button",
-                Icon=cf and "circle-check" or "circle-x", Duration=3
-            })
-        end
-    end
-})
-GAGTab:Button({
-    Title = "Save Current Position as Sell Stand",
-    Icon  = "map-pin",
-    Callback = function()
-        local hrp = getRoot(LocalPlayer)
-        if hrp then
-            cachedSellCFrame = hrp.CFrame
-            if hasFs then pcall(function() writefile("ntmthub_sell_cf.txt", tostring(hrp.CFrame)) end) end
-            WindUI:Notify({ Title="Sell Stand", Content="Position saved", Icon="circle-check", Duration=2 })
-        end
-    end
-})
-if hasFs then
-    pcall(function()
-        if isfile("ntmthub_sell_cf.txt") then
-            local data = readfile("ntmthub_sell_cf.txt")
-            local nums = {}
-            for n in tostring(data):gmatch("[-%d%.]+") do table.insert(nums, tonumber(n)) end
-            if #nums >= 12 then cachedSellCFrame = CFrame.new(unpack(nums)) end
-        end
-    end)
-end
-GAGTab:Slider({
-    Title = "Sell Speed (sec)",
-    Step  = 0.05,
-    Value = { Min=0.05, Max=5, Default=0.1 },
-    Callback = function(v) sellInterval = v end
-})
-GAGTab:Button({
-    Title = "Sell All Now",
-    Icon  = "dollar-sign",
-    Callback = function()
-        sellInventory()
-        WindUI:Notify({ Title="Sell All", Content="Sell command fired", Icon="circle-check", Duration=2 })
-    end
-})
-
--- ---- AUTO STEAL (NIGHT) ----
-GAGTab:Section({ Title = "Auto Steal (Night Only)" })
-local stealReturnAfter = true
-
-GAGTab:Toggle({
-    Title = "Auto Steal (Night only)",
-    Default = false,
-    Callback = function(state)
-        genv.ftgs_AutoSteal = state
-        WindUI:Notify({ Title="Auto Steal", Content=state and "ON (waiting for night)" or "OFF", Icon=state and "play" or "pause", Duration=2 })
-    end
-})
-GAGTab:Toggle({
-    Title = "Return to plot after steal",
-    Default = true,
-    Callback = function(v) stealReturnAfter = v end
-})
-GAGTab:Button({
-    Title = "Test Steal 1 fruit",
-    Icon  = "swords",
-    Callback = function()
-        if not isNightTime() then
-            WindUI:Notify({ Title="Not yet", Content="Only works at night", Icon="moon", Duration=3 })
-            return
-        end
-        local target, val = getMostValuableSteal()
-        if not target then
-            WindUI:Notify({ Title="No target", Content="No stealable fruit found", Icon="circle-x", Duration=3 })
-            return
-        end
-        local ok = stealFruit(target)
-        if stealReturnAfter then returnToOwnPlot() end
-        WindUI:Notify({
-            Title=ok and "Stolen!" or "Failed",
-            Content=ok and ("Got: %s (value %s)"):format(target.Name, tostring(val)) or "Steal failed",
-            Icon=ok and "circle-check" or "circle-x", Duration=3
-        })
-    end
-})
-
--- ===================== TAB: AUTO PLANT (NEW) =====================
-local PlantTab = Window:Tab({ Title = "Auto Plant", Icon = "sprout" })
-
--- Selected seeds for selective planting
-local selectedSeedsForPlant = {}
-
-PlantTab:Section({ Title = "Plant Mode" })
-
-PlantTab:Toggle({
-    Title = "Auto Plant ALL Seeds in Inventory",
-    Desc  = "Plants every seed tool in your backpack",
-    Default = false,
-    Callback = function(state)
-        genv.ftgs_AutoPlantAll    = state
-        if state then genv.ftgs_AutoPlantSelect = false end
-        WindUI:Notify({ Title="Auto Plant All", Content=state and "ON" or "OFF", Icon=state and "play" or "pause", Duration=2 })
-    end
-})
-
-PlantTab:Toggle({
-    Title = "Auto Plant SELECTED Seeds",
-    Desc  = "Only plants seeds checked below",
-    Default = false,
-    Callback = function(state)
-        genv.ftgs_AutoPlantSelect = state
-        if state then genv.ftgs_AutoPlantAll = false end
-        WindUI:Notify({ Title="Auto Plant Select", Content=state and "ON" or "OFF", Icon=state and "play" or "pause", Duration=2 })
-    end
-})
-
-PlantTab:Button({
-    Title = "Plant Now (one time)",
-    Icon  = "zap",
-    Callback = function()
-        local hrp = getRoot(LocalPlayer)
-        if not hrp then return end
-        local seeds = getSeedsInBackpack()
-        local count = 0
-        for _, tool in ipairs(seeds) do
-            local n = tool.Name:gsub(" Seed",""):gsub("Seed",""):match("^%s*(.-)%s*$")
-            firePlant(hrp.Position, n)
-            count += 1
-            task.wait(0.1)
-        end
-        WindUI:Notify({ Title="Plant Now", Content=("Fired plant for %d seeds"):format(count), Icon="circle-check", Duration=2 })
-    end
-})
-
-local plantInterval2 = 0.5
-
-PlantTab:Slider({
-    Title = "Plant Interval (sec)",
-    Step  = 0.1,
-    Value = { Min=0.2, Max=3, Default=0.5 },
-    Callback = function(v) plantInterval2 = v end
-})
-
-PlantTab:Section({ Title = "Select Seeds to Plant" })
-
-for _, seed in ipairs(SEEDS_LIST) do
-    local seedName = seed.name
-    PlantTab:Toggle({
-        Title = seedName .. "  [" .. seed.rarity .. "]",
-        Default = false,
-        Callback = function(v)
-            selectedSeedsForPlant[seedName] = v
-        end
-    })
-end
-
-PlantTab:Button({
-    Title = "Debug: Find Plant Remote",
-    Icon  = "search",
-    Callback = function()
-        cachedPlantRemote = nil
-        local rem = findPlantRemote()
-        if rem then
-            WindUI:Notify({ Title="Plant Remote", Content="Found: " .. rem:GetFullName(), Icon="circle-check", Duration=6 })
-            print("[NTMT HUB] Plant remote:", rem:GetFullName())
-        else
-            WindUI:Notify({ Title="Plant Remote", Content="Not found", Icon="circle-x", Duration=5 })
-        end
-    end
-})
-
--- ===================== TAB: ANTI-STEAL DEFENSE (NEW) =====================
-local DefenseTab = Window:Tab({ Title = "Anti-Steal", Icon = "shield" })
-
-DefenseTab:Section({ Title = "Garden Defense" })
-
-local antiStealLogText = "Garden is safe ✅"
-
-DefenseTab:Toggle({
-    Title = "Anti-Steal Defense",
-    Desc  = "Detects thieves in your garden, equips shovel & hits them",
-    Default = false,
-    Callback = function(state)
-        genv.ftgs_AntiStealDef = state
-        WindUI:Notify({
-            Title = "Anti-Steal Defense",
-            Content = state and "ON — watching your garden" or "OFF",
-            Icon = state and "shield" or "shield-off",
-            Duration = 2,
-        })
-    end
-})
-
-local stealLogParagraph = DefenseTab:Paragraph({
-    Title = "Status",
-    Desc  = antiStealLogText,
-})
-
-DefenseTab:Section({ Title = "Info" })
-DefenseTab:Paragraph({
-    Title = "How it works",
-    Desc  = "When a player enters your garden boundary at night, the script equips your Shovel and teleports to the thief to hit them. Make sure you have a Shovel in your backpack!",
-})
-
--- ===================== TAB: AUTO BUY SEEDS (NEW) =====================
-local SeedBuyTab = Window:Tab({ Title = "Buy Seeds", Icon = "shopping-bag" })
-
-local buyAllSeeds    = true
-local selectedBuySeeds = {}
-local seedBuyAmount  = 10
-local seedBuyInterval = 1.5
-
-SeedBuyTab:Section({ Title = "Buy Controls" })
-
-SeedBuyTab:Toggle({
-    Title = "Auto Buy Seeds",
-    Default = false,
-    Callback = function(s)
-        genv.ftgs_AutoBuySeed = s
-        WindUI:Notify({ Title="Auto Buy Seed", Content=s and "ON" or "OFF", Icon=s and "play" or "pause", Duration=2 })
-    end
-})
-SeedBuyTab:Toggle({
-    Title = "Buy ALL Seeds",
-    Desc  = "OFF = only buy selected seeds below",
-    Default = true,
-    Callback = function(v) buyAllSeeds = v end
-})
-SeedBuyTab:Slider({
-    Title = "Amount per buy",
-    Step  = 1,
-    Value = { Min=1, Max=100, Default=10 },
-    Callback = function(v) seedBuyAmount = v end
-})
-SeedBuyTab:Slider({
-    Title = "Buy Interval (sec)",
-    Step  = 0.2,
-    Value = { Min=1, Max=30, Default=1.5 },
-    Callback = function(v) seedBuyInterval = v end
-})
-SeedBuyTab:Button({
-    Title = "Buy Seeds Now",
-    Icon  = "shopping-cart",
-    Callback = function()
-        local count = 0
-        for _, seed in ipairs(SEEDS_LIST) do
-            if buyAllSeeds or selectedBuySeeds[seed.name] then
-                buySeed(seed.name, seedBuyAmount)
-                count += 1
-            end
-        end
-        WindUI:Notify({ Title="Buy Seeds", Content=("Fired buy for %d seed types"):format(count), Icon="circle-check", Duration=3 })
-    end
-})
-SeedBuyTab:Button({
-    Title = "Debug: List Buy Remotes (F9)",
-    Icon  = "search",
-    Callback = function()
-        local GE = Services.ReplicatedStorage:FindFirstChild("GameEvents")
-        local foundGE = {}
-        if GE then
-            for _, c in ipairs(GE:GetChildren()) do
-                local lname = c.Name:lower()
-                if lname:find("buy") or lname:find("purchase") or lname:find("shop") then
-                    table.insert(foundGE, c.Name .. "(" .. c.ClassName .. ")")
-                end
-            end
-        end
-        print("===== BUY REMOTES =====")
-        print("GameEvents:", table.concat(foundGE, ", "))
-        print("=======================")
-        WindUI:Notify({ Title="Check F9 Console", Content=("Found %d buy remotes"):format(#foundGE), Icon="info", Duration=4 })
-    end
-})
-
-SeedBuyTab:Section({ Title = "Select Seeds to Buy (when Buy ALL = OFF)" })
-
-for _, seed in ipairs(SEEDS_LIST) do
-    local sn = seed.name
-    SeedBuyTab:Toggle({
-        Title = sn .. "  [" .. seed.rarity .. "]  —  " .. tostring(seed.cost) .. "S",
-        Default = false,
-        Callback = function(v) selectedBuySeeds[sn] = v end
-    })
-end
-
--- ===================== TAB: AUTO BUY GEARS (NEW) =====================
-local GearBuyTab = Window:Tab({ Title = "Buy Gears", Icon = "wrench" })
-
-local buyAllGears     = true
-local selectedBuyGears = {}
-local gearBuyAmount   = 10
-local gearBuyInterval = 1.5
-
-GearBuyTab:Section({ Title = "Buy Controls" })
-
-GearBuyTab:Toggle({
-    Title = "Auto Buy Gears",
-    Default = false,
-    Callback = function(s)
-        genv.ftgs_AutoBuyGear = s
-        WindUI:Notify({ Title="Auto Buy Gear", Content=s and "ON" or "OFF", Icon=s and "play" or "pause", Duration=2 })
-    end
-})
-GearBuyTab:Toggle({
-    Title = "Buy ALL Gears",
-    Desc  = "OFF = only buy selected gears below",
-    Default = true,
-    Callback = function(v) buyAllGears = v end
-})
-GearBuyTab:Slider({
-    Title = "Amount per buy",
-    Step  = 1,
-    Value = { Min=1, Max=100, Default=10 },
-    Callback = function(v) gearBuyAmount = v end
-})
-GearBuyTab:Slider({
-    Title = "Buy Interval (sec)",
-    Step  = 0.2,
-    Value = { Min=1, Max=30, Default=1.5 },
-    Callback = function(v) gearBuyInterval = v end
-})
-GearBuyTab:Button({
-    Title = "Buy Gears Now",
-    Icon  = "shopping-cart",
-    Callback = function()
-        local count = 0
-        for _, gear in ipairs(GEARS_LIST) do
-            if buyAllGears or selectedBuyGears[gear.name] then
-                buyGear(gear.name, gearBuyAmount)
-                count += 1
-            end
-        end
-        WindUI:Notify({ Title="Buy Gears", Content=("Fired buy for %d gear types"):format(count), Icon="circle-check", Duration=3 })
-    end
-})
-
-GearBuyTab:Section({ Title = "Select Gears to Buy (when Buy ALL = OFF)" })
-
-for _, gear in ipairs(GEARS_LIST) do
-    local gn = gear.name
-    GearBuyTab:Toggle({
-        Title = gn .. "  [" .. gear.rarity .. "]  —  " .. tostring(gear.cost) .. "S",
-        Default = false,
-        Callback = function(v) selectedBuyGears[gn] = v end
-    })
-end
-
--- ===================== TAB: PLAYER CONTROL =====================
-local PlayerTab = Window:Tab({ Title = "Player", Icon = "user" })
-
-PlayerTab:Section({ Title = "Movement" })
-PlayerTab:Slider({
     Title = "Walk Speed",
     Step  = 1,
-    Value = { Min=16, Max=250, Default=16 },
-    Callback = function(v) desiredWalkSpeed = v; applyMovement() end
-})
-PlayerTab:Slider({
-    Title = "Jump Power",
-    Step  = 1,
-    Value = { Min=50, Max=500, Default=50 },
-    Callback = function(v) desiredJumpPower = v; applyMovement() end
-})
-PlayerTab:Button({
-    Title = "Reset Speed & Jump",
-    Icon  = "refresh-cw",
-    Callback = function()
-        desiredWalkSpeed = 16; desiredJumpPower = 50
+    Value = { Min = 16, Max = 250, Default = 16 },
+    Callback = function(v)
+        desiredWalkSpeed = v
         applyMovement()
-        WindUI:Notify({ Title="Reset", Content="Speed & Jump reset", Icon="circle-check", Duration=2 })
     end
 })
 
-PlayerTab:Section({ Title = "Utility" })
-PlayerTab:Toggle({
+GAGTab:Slider({
+    Title = "Jump Power",
+    Step  = 1,
+    Value = { Min = 50, Max = 500, Default = 50 },
+    Callback = function(v)
+        desiredJumpPower = v
+        applyMovement()
+    end
+})
+
+GAGTab:Button({
+    Title = "Reset Speed & Jump",
+    Icon = "refresh-cw",
+    Callback = function()
+        desiredWalkSpeed = 16
+        desiredJumpPower = 50
+        applyMovement()
+        WindUI:Notify({ Title = "Reset", Content = "Đã reset", Icon = "circle-check", Duration = 2 })
+    end
+})
+
+------------------------------------------------------------
+-- 13) TIỆN ÍCH
+------------------------------------------------------------
+
+GAGTab:Section({ Title = "Tiện ích" })
+
+GAGTab:Toggle({
     Title = "Anti-AFK",
     Default = false,
     Callback = function(state)
@@ -1335,130 +1381,33 @@ PlayerTab:Toggle({
         if state then
             local conn
             conn = LocalPlayer.Idled:Connect(function()
-                if not genv.ftgs_AntiAFK then conn:Disconnect(); return end
+                if not genv.ftgs_AntiAFK then conn:Disconnect() return end
                 pcall(function()
-                    Services.VirtualUser:Button2Down(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                    Services.VirtualUser:Button2Down(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
                     task.wait(1)
-                    Services.VirtualUser:Button2Up(Vector2.new(0,0), workspace.CurrentCamera.CFrame)
+                    Services.VirtualUser:Button2Up(Vector2.new(0, 0), workspace.CurrentCamera.CFrame)
                 end)
             end)
         end
-        WindUI:Notify({ Title="Anti-AFK", Content=state and "ON" or "OFF", Icon=state and "play" or "pause", Duration=2 })
-    end
-})
-
--- ===================== TAB: AUTO COLLECT =====================
-local CollectTab = Window:Tab({ Title = "Auto Collect", Icon = "package" })
-
-CollectTab:Section({ Title = "Collect Settings" })
-CollectTab:Toggle({
-    Title = "Auto Collect Drops",
-    Desc  = "Picks up items with ProximityPrompt (Pickup/Collect)",
-    Default = false,
-    Callback = function(state)
-        genv.ftgs_AutoCollect = state
-        WindUI:Notify({ Title="Auto Collect", Content=state and "ON" or "OFF", Icon=state and "play" or "pause", Duration=2 })
-    end
-})
-CollectTab:Slider({
-    Title = "Collect Interval (sec)",
-    Step  = 0.05,
-    Value = { Min=0.2, Max=3, Default=0.4 },
-    Callback = function(v) collectInterval = v end
-})
-CollectTab:Slider({
-    Title = "Max Range (studs)",
-    Step  = 10,
-    Value = { Min=50, Max=1000, Default=250 },
-    Callback = function(v) collectMaxRange = v end
-})
-CollectTab:Toggle({
-    Title = "Return after collect",
-    Default = true,
-    Callback = function(v) collectReturn = v end
-})
-CollectTab:Section({ Title = "Keywords to Collect" })
-for _, kw in ipairs({ "gold","rainbow","legend","mythic","special","drop" }) do
-    local keyword = kw
-    CollectTab:Toggle({
-        Title = "Collect '" .. keyword .. "'",
-        Default = collectKeywords[keyword] == true,
-        Callback = function(v) collectKeywords[keyword] = v end
-    })
-end
-CollectTab:Button({
-    Title = "Scan & Collect Now",
-    Icon  = "package",
-    Callback = function()
-        local hrp  = getRoot(LocalPlayer)
-        local orig = hrp and hrp.CFrame
-        local drops = scanDrops()
-        for _, d in ipairs(drops) do collectItem(d.item, d.prompt) end
-        if collectReturn and orig and hrp then pcall(function() hrp.CFrame = orig end) end
-        WindUI:Notify({ Title="Collect", Content=("Found %d drops"):format(#drops), Icon=#drops>0 and "circle-check" or "info", Duration=2 })
-    end
-})
-
--- ===================== TAB: INFO =====================
-local InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
-
-InfoTab:Section({ Title = "Status" })
-InfoTab:Paragraph({ Title = "Executor",        Desc = Executor })
-InfoTab:Paragraph({ Title = "Networking",       Desc = Networking and "Loaded ✅" or "NOT FOUND ❌" })
-InfoTab:Paragraph({ Title = "FruitValueCalc",   Desc = FruitValueCalc and "Loaded ✅" or "NOT FOUND ❌" })
-InfoTab:Paragraph({ Title = "Gardens folder",   Desc = Gardens and "Found ✅" or "NOT FOUND ❌" })
-
-local nightStatus = InfoTab:Paragraph({ Title = "Time",    Desc = isNightTime() and "🌙 Night" or "☀️ Day" })
-local plotStatus  = InfoTab:Paragraph({ Title = "My Plot", Desc = getOwnedPlot() and ("Plot: " .. getOwnedPlot().Name) or "Not found" })
-
-task.spawn(function()
-    while task.wait(2) do
-        pcall(function()
-            nightStatus:SetDesc(isNightTime() and "🌙 Night" or "☀️ Day")
-            local plot = getOwnedPlot()
-            plotStatus:SetDesc(plot and ("Plot: " .. plot.Name) or "Not found")
-        end)
-    end
-end)
-
-InfoTab:Section({ Title = "Debug" })
-InfoTab:Button({
-    Title = "List Networking categories (F9)",
-    Icon  = "list",
-    Callback = function()
-        if not Networking then
-            WindUI:Notify({ Title="Error", Content="Networking not loaded", Icon="x", Duration=3 })
-            return
-        end
-        print("===== Networking categories =====")
-        for k, v in pairs(Networking) do
-            print(k, "->", type(v))
-            if type(v) == "table" then
-                for k2, _ in pairs(v) do print("    ." .. tostring(k2)) end
-            end
-        end
-        WindUI:Notify({ Title="Debug", Content="Check F9 console", Icon="terminal", Duration=3 })
-    end
-})
-InfoTab:Button({
-    Title = "Count fruits on your plot",
-    Icon  = "apple",
-    Callback = function()
-        local list = getHarvestablePlants()
-        WindUI:Notify({ Title="Plants", Content=("%d fruit/plant"):format(#list), Icon="info", Duration=3 })
+        WindUI:Notify({
+            Title = "Anti-AFK",
+            Content = state and "Đã bật" or "Đã tắt",
+            Icon = state and "play" or "pause",
+            Duration = 2,
+        })
     end
 })
 
 ------------------------------------------------------------
--- 17) MAIN LOOPS
+-- 14) MAIN LOOPS
 ------------------------------------------------------------
 
--- Auto Harvest loop
+-- Auto Harvest
 task.spawn(function()
     while true do
         if genv.ftgs_AutoHarvest then
             pcall(function()
-                local hrp    = getRoot(LocalPlayer)
+                local hrp = getRoot(LocalPlayer)
                 local origCF = hrp and hrp.CFrame
                 local plants = getHarvestablePlants()
                 if genv.ftgs_HarvestInfRange and hrp and origCF then
@@ -1479,7 +1428,7 @@ task.spawn(function()
     end
 end)
 
--- Auto Sell loop
+-- Auto Sell
 task.spawn(function()
     while true do
         task.wait(sellInterval)
@@ -1487,8 +1436,7 @@ task.spawn(function()
     end
 end)
 
--- Auto Steal loop
-local stealReturnAfter2 = stealReturnAfter
+-- Auto Steal
 task.spawn(function()
     while true do
         task.wait(0.5)
@@ -1503,52 +1451,89 @@ task.spawn(function()
     end
 end)
 
--- Auto Buy Seeds loop
+-- Auto Buy: dùng restock timer của game. Mua ngay khi bật, rồi đợi đến UnixNextRestock
+local lastSeedRestock, lastGearRestock = 0, 0
+
 task.spawn(function()
     while true do
-        task.wait(seedBuyInterval)
-        if genv.ftgs_AutoBuySeed then
-            for _, seed in ipairs(SEEDS_LIST) do
-                if buyAllSeeds or selectedBuySeeds[seed.name] then
-                    pcall(buySeed, seed.name, seedBuyAmount)
-                end
+        task.wait(2)
+        if genv.ftgs_AutoBuySeed and PacketRemoteEvent then
+            local nextRestock = getUnixNextRestock("Seeds")
+            local now = os.time()
+            if nextRestock and now >= nextRestock and nextRestock ~= lastSeedRestock then
+                lastSeedRestock = nextRestock
+                pcall(function()
+                    for _, s in ipairs(SEEDS_LIST) do
+                        if not genv.ftgs_AutoBuySeed then break end
+                        if buyAllSeeds or selectedSeeds[s] then
+                            buyShopItem("Seeds", s)
+                        end
+                    end
+                end)
+            end
+        end
+        if genv.ftgs_AutoBuyGear and PacketRemoteEvent then
+            local nextRestock = getUnixNextRestock("Gears")
+            local now = os.time()
+            if nextRestock and now >= nextRestock and nextRestock ~= lastGearRestock then
+                lastGearRestock = nextRestock
+                pcall(function()
+                    for _, g in ipairs(GEARS_LIST) do
+                        if not genv.ftgs_AutoBuyGear then break end
+                        if buyAllGears or selectedGears[g] then
+                            buyShopItem("Gears", g)
+                        end
+                    end
+                end)
             end
         end
     end
 end)
 
--- Auto Buy Gears loop
-task.spawn(function()
-    while true do
-        task.wait(gearBuyInterval)
-        if genv.ftgs_AutoBuyGear then
-            for _, gear in ipairs(GEARS_LIST) do
-                if buyAllGears or selectedBuyGears[gear.name] then
-                    pcall(buyGear, gear.name, gearBuyAmount)
-                end
+-- Khi user bật toggle, mua ngay lần đầu (không đợi restock)
+local function buyAllSeedStockNow()
+    pcall(function()
+        for _, s in ipairs(SEEDS_LIST) do
+            if not genv.ftgs_AutoBuySeed then break end
+            if buyAllSeeds or selectedSeeds[s] then
+                buyShopItem("Seeds", s)
             end
         end
-    end
-end)
+    end)
+end
 
--- Auto Plant loop (NEW)
+local function buyAllGearStockNow()
+    pcall(function()
+        for _, g in ipairs(GEARS_LIST) do
+            if not genv.ftgs_AutoBuyGear then break end
+            if buyAllGears or selectedGears[g] then
+                buyShopItem("Gears", g)
+            end
+        end
+    end)
+end
+
+-- Auto Plant
 task.spawn(function()
     while true do
-        task.wait(plantInterval2)
-        if genv.ftgs_AutoPlantAll or genv.ftgs_AutoPlantSelect then
+        task.wait(plantInterval)
+        if genv.ftgs_AutoPlant then
             pcall(function()
                 local hrp = getRoot(LocalPlayer)
-                if not hrp then return end
-                local seeds = getSeedsInBackpack()
-                for _, tool in ipairs(seeds) do
-                    local cleanName = tool.Name:gsub(" Seed",""):gsub("Seed",""):match("^%s*(.-)%s*$")
-                    local shouldPlant = genv.ftgs_AutoPlantAll
-                    if not shouldPlant and genv.ftgs_AutoPlantSelect then
-                        shouldPlant = selectedSeedsForPlant[cleanName] == true
+                local seed = getEquippedSeedName()
+                if not hrp or not seed then return end
+                local center = hrp.Position
+                if plantMode == "Below" then
+                    firePlant(center, seed)
+                elseif plantMode == "Line" then
+                    for i = -2, 2 do
+                        firePlant(center + Vector3.new(i * plantSpacing, 0, 0), seed)
                     end
-                    if shouldPlant then
-                        firePlant(hrp.Position, cleanName)
-                        task.wait(0.08)
+                elseif plantMode == "Circle" then
+                    for i = 0, 5 do
+                        local ang = (i / 6) * math.pi * 2
+                        local off = Vector3.new(math.cos(ang), 0, math.sin(ang)) * plantSpacing
+                        firePlant(center + off, seed)
                     end
                 end
             end)
@@ -1556,57 +1541,12 @@ task.spawn(function()
     end
 end)
 
--- Anti-Steal Defense loop (NEW)
-task.spawn(function()
-    local lastHitTime = {}
-    while true do
-        task.wait(0.5)
-        if genv.ftgs_AntiStealDef then
-            pcall(function()
-                local detected = false
-                for _, player in ipairs(Services.Players:GetPlayers()) do
-                    if isInMyGarden(player) then
-                        detected = true
-                        local now = tick()
-                        local lastHit = lastHitTime[player.UserId] or 0
-                        -- Only hit every 2 seconds per player to avoid spam
-                        if now - lastHit >= 2 then
-                            lastHitTime[player.UserId] = now
-                            -- Notify
-                            WindUI:Notify({
-                                Title = "🚨 THIEF DETECTED",
-                                Content = player.Name .. " is in your garden!",
-                                Icon = "alert-triangle",
-                                Duration = 3,
-                            })
-                            -- Equip shovel and hit
-                            if equipShovel() then
-                                task.wait(0.2)
-                                hitStealer(player)
-                            end
-                        end
-                        -- Update status paragraph
-                        pcall(function()
-                            stealLogParagraph:SetDesc("🚨 THIEF: " .. player.Name)
-                        end)
-                    end
-                end
-                if not detected then
-                    pcall(function()
-                        stealLogParagraph:SetDesc("Garden is safe ✅")
-                    end)
-                end
-            end)
-        end
-    end
-end)
-
--- Auto Collect loop
+-- Auto Collect
 task.spawn(function()
     while true do
         task.wait(collectInterval)
         if genv.ftgs_AutoCollect then
-            local hrp  = getRoot(LocalPlayer)
+            local hrp = getRoot(LocalPlayer)
             local orig = hrp and hrp.CFrame
             local ok, drops = pcall(scanDrops)
             if ok and drops and #drops > 0 then
@@ -1622,4 +1562,81 @@ task.spawn(function()
     end
 end)
 
-print(("[NTMT HUB] Loaded on executor: %s"):format(Executor))
+------------------------------------------------------------
+-- 15) INFO / DEBUG TAB
+------------------------------------------------------------
+
+local InfoTab = Window:Tab({ Title = "Info", Icon = "info" })
+
+InfoTab:Section({ Title = "Trạng thái" })
+
+InfoTab:Paragraph({ Title = "Executor", Desc = Executor })
+InfoTab:Paragraph({
+    Title = "Platform",
+    Desc  = (function()
+        local UIS = game:GetService("UserInputService")
+        if UIS.TouchEnabled and not UIS.MouseEnabled and not UIS.KeyboardEnabled then return "Mobile" end
+        if UIS.TouchEnabled and UIS.MouseEnabled then return "Hybrid" end
+        return "PC"
+    end)(),
+})
+InfoTab:Paragraph({ Title = "Networking module", Desc = Networking and "Loaded" or "NOT FOUND" })
+InfoTab:Paragraph({ Title = "FruitValueCalc",   Desc = FruitValueCalc and "Loaded" or "NOT FOUND" })
+InfoTab:Paragraph({ Title = "Gardens folder",   Desc = Gardens and "Found" or "NOT FOUND" })
+
+local nightStatus = InfoTab:Paragraph({
+    Title = "Night Time",
+    Desc  = isNightTime() and "DEM" or "NGAY",
+})
+
+local plotStatus = InfoTab:Paragraph({
+    Title = "My Plot",
+    Desc  = getOwnedPlot() and ("Plot: " .. getOwnedPlot().Name) or "Không tìm thấy",
+})
+
+task.spawn(function()
+    while task.wait(2) do
+        pcall(function()
+            nightStatus:SetDesc(isNightTime() and "DEM" or "NGAY")
+            local plot = getOwnedPlot()
+            plotStatus:SetDesc(plot and ("Plot: " .. plot.Name) or "Không tìm thấy")
+        end)
+    end
+end)
+
+InfoTab:Section({ Title = "Debug" })
+
+InfoTab:Button({
+    Title = "List Networking categories",
+    Icon  = "list",
+    Callback = function()
+        if not Networking then
+            WindUI:Notify({ Title = "Lỗi", Content = "Networking chưa load", Icon = "x", Duration = 3 })
+            return
+        end
+        print("===== Networking categories =====")
+        for k, v in pairs(Networking) do
+            print(k, "->", type(v))
+            if type(v) == "table" then
+                for k2, _ in pairs(v) do print("    ." .. tostring(k2)) end
+            end
+        end
+        WindUI:Notify({ Title = "Debug", Content = "Xem console (F9)", Icon = "terminal", Duration = 3 })
+    end
+})
+
+InfoTab:Button({
+    Title = "Đếm fruit trên plot của bạn",
+    Icon  = "apple",
+    Callback = function()
+        local list = getHarvestablePlants()
+        WindUI:Notify({
+            Title = "Plants",
+            Content = ("%d fruit/plant"):format(#list),
+            Icon = "info",
+            Duration = 3,
+        })
+    end
+})
+
+print(("[NTMT HUB] Đã khởi tạo trên executor: %s"):format(Executor))
