@@ -360,7 +360,7 @@ local UIRegistry = {}
 
 local I18N = {
     English = {
-        tab_main = "Main", tab_automation = "Automation", tab_shop = "Shop", tab_webhook = "Webhook", tab_settings = "Settings",
+        tab_main = "Main", tab_automation = "Automation", tab_shop = "Shop", tab_webhook = "Webhook", tab_settings = "Info",
         auto_harvest = "Auto Harvest", auto_sell = "Auto Sell", auto_expand = "Auto Expand Garden",
         auto_sprinkler = "Auto Sprinkler & Water", anti_steal = "Anti-Steal", auto_mail = "Auto Mail",
         auto_steal = "Auto Steal (Night)",
@@ -375,7 +375,7 @@ local I18N = {
         seed_shop_live = "Seed Shop (Live)", gear_shop_live = "Gear Shop (Live)",
         job_id = "Job ID", join_server = "Join Server", rejoin_server = "Rejoin Server",
         hop_server = "Hop Server", copy_job_id = "Copy Job ID",
-        webhook_url = "Webhook URL", auto_notification = "Auto Notification", notify_minutes = "Notify Interval (minutes)",
+        webhook_url = "Webhook URL", auto_notification = "Auto Notification", notify_minutes = "Notify every (minutes, 1 = 1 min)",
         test_webhook = "Test Webhook", select_pet_find = "Select Pet to Find", auto_find_pet = "Auto Find Pet",
         scan_server = "Scan Server Now", hop_find_pet = "Hop to Another Server",
         discord_link = "Discord", executor_label = "Executor", roblox_user = "Roblox User",
@@ -384,9 +384,28 @@ local I18N = {
         enabled = "Enabled", disabled = "Disabled", select_pet = "Select Pet", select_seed = "Select Seed",
         select_gear = "Select Gear", buy_all_seeds = "Buy All Seeds Whitelist", buy_all_gears = "Buy All Gears Whitelist",
         return_after_steal = "Return to plot after steal burst",
+        tab_server = "Server",
+        desc_auto_harvest = "Auto collect all fruit in garden",
+        desc_auto_sell = "Auto sell all fruit in inventory",
+        desc_auto_steal = "Auto steal best fruit",
+        desc_auto_buy_seed = "Auto buy select seed",
+        desc_auto_buy_gear = "Auto buy select gear",
+        desc_auto_buy_all_seed = "Auto buy all seed stock",
+        desc_auto_buy_all_gear = "Auto buy all gear stock",
+        desc_auto_buy_pet = "Auto buy select pet",
+        desc_auto_buy_all_pet = "Auto buy all pet on map",
+        desc_auto_plant = "Equip seed & plant random spot",
+        desc_auto_plant_all = "Plant all seeds in inventory",
+        desc_auto_sprinkler = "Equip sprinkler/water & place random spot",
+        desc_auto_expand = "Auto expand garden plot",
+        desc_anti_steal = "Hit players stealing in your garden",
+        desc_auto_collect_rg = "Collect rainbow/gold seeds",
+        desc_auto_collect_drop = "Collect item drops on map",
+        desc_auto_shovel = "Remove selected plants",
+        desc_auto_find_pet = "Hop servers until pet found",
     },
     Vietnamese = {
-        tab_main = "Chính", tab_automation = "Tự động", tab_shop = "Cửa hàng", tab_webhook = "Webhook", tab_settings = "Cài đặt",
+        tab_main = "Chính", tab_automation = "Tự động", tab_shop = "Cửa hàng", tab_webhook = "Webhook", tab_settings = "Info",
         auto_harvest = "Tự thu hoạch", auto_sell = "Tự bán", auto_expand = "Tự mở rộng vườn",
         auto_sprinkler = "Tự sprinkler & tưới", anti_steal = "Chống trộm", auto_mail = "Tự gửi thư",
         auto_steal = "Tự trộm (đêm)",
@@ -401,7 +420,7 @@ local I18N = {
         seed_shop_live = "Cửa hàng hạt (live)", gear_shop_live = "Cửa hàng gear (live)",
         job_id = "Job ID", join_server = "Vào server", rejoin_server = "Vào lại server",
         hop_server = "Nhảy server", copy_job_id = "Copy Job ID",
-        webhook_url = "Webhook URL", auto_notification = "Tự thông báo", notify_minutes = "Chu kỳ (phút)",
+        webhook_url = "Webhook URL", auto_notification = "Tự thông báo", notify_minutes = "Chu kỳ (phút, 1 = 1 phút)",
         test_webhook = "Test webhook", select_pet_find = "Chọn pet cần tìm", auto_find_pet = "Tự tìm pet",
         scan_server = "Quét server ngay", hop_find_pet = "Nhảy server khác",
         discord_link = "Discord", executor_label = "Executor", roblox_user = "Tài khoản Roblox",
@@ -410,6 +429,25 @@ local I18N = {
         enabled = "Đã bật", disabled = "Đã tắt", select_pet = "Chọn pet", select_seed = "Chọn hạt",
         select_gear = "Chọn gear", buy_all_seeds = "Mua tất cả hạt", buy_all_gears = "Mua tất cả gear",
         return_after_steal = "Về plot sau đợt trộm",
+        tab_server = "Server",
+        desc_auto_harvest = "Tự thu hoạch fruit trong vườn",
+        desc_auto_sell = "Tự bán fruit trong inventory",
+        desc_auto_steal = "Tự trộm fruit giá trị cao",
+        desc_auto_buy_seed = "Tự mua seed đã chọn",
+        desc_auto_buy_gear = "Tự mua gear đã chọn",
+        desc_auto_buy_all_seed = "Tự mua hết seed trong shop",
+        desc_auto_buy_all_gear = "Tự mua hết gear trong shop",
+        desc_auto_buy_pet = "Tự mua pet đã chọn",
+        desc_auto_buy_all_pet = "Tự mua hết pet trên map",
+        desc_auto_plant = "Cầm seed & trồng vị trí ngẫu nhiên",
+        desc_auto_plant_all = "Trồng hết seed trong inventory",
+        desc_auto_sprinkler = "Cầm sprinkler/tưới & đặt vị trí ngẫu nhiên",
+        desc_auto_expand = "Tự mở rộng vườn",
+        desc_anti_steal = "Đánh người trộm trong vườn",
+        desc_auto_collect_rg = "Nhặt rainbow/gold seed",
+        desc_auto_collect_drop = "Nhặt item rơi trên map",
+        desc_auto_shovel = "Xóa cây đã chọn",
+        desc_auto_find_pet = "Nhảy server tìm pet",
     },
 
 }
@@ -442,9 +480,7 @@ end
 local function applyTranslations()
     for _, entry in ipairs(UIRegistry) do
         local el, key, kind = entry.el, entry.key, entry.kind
-        if not el then
-            -- skip
-        else
+        if el then
             local text = tr(key)
             if kind == "desc" then
                 pcall(function()
@@ -493,7 +529,7 @@ local sellInterval = 2
 local plantInterval = 0.5
 local collectInterval = 0.35
 local expandInterval = 8
-local sprinklerInterval = 2
+local sprinklerInterval = 0.6
 local shovelInterval = 0.35
 local mailInterval = 10
 local petCatchInterval = 1.5
@@ -504,13 +540,14 @@ local stealReturnAfter = true
 
 local BoughtSeeds = {}
 local BoughtGears = {}
+local BoughtPets = {}
+local StolenFruits = {}
 
 local selectedSprinklerRarity = nil
 local selectedWateringCan = nil
 local selectedPlantSeed = nil
 local BuyPetWhitelist = {}
 local FindPetWhitelist = {}
-local fixedGardenSpot = nil
 local plantAllOrder = {}
 
 local mailUsername = ""
@@ -570,7 +607,7 @@ local maxGearInsufficientFundsRetries = 3
 
 local webhookUrl = ""
 local webhookEnabled = false
-local webhookIntervalMinutes = 5
+local webhookIntervalMinutes = 1
 local WEBHOOK_SAVE_PATH = "ntmthub_webhook.txt"
 
 if hasFs and isfile and isfile(WEBHOOK_SAVE_PATH) then
@@ -677,9 +714,7 @@ local function randomPlantSpot()
 end
 
 local function getGardenPlantSpot()
-    if fixedGardenSpot then return fixedGardenSpot end
-    fixedGardenSpot = randomPlantSpot()
-    return fixedGardenSpot
+    return randomPlantSpot()
 end
 
 local function goToGardenSpot(pos)
@@ -1376,6 +1411,8 @@ local function stealFruit(fruit)
         pcall(function() Networking.Steal.CompleteSteal:Fire() end)
         task.wait(0.05)
     end
+    local fruitName = fruit:GetAttribute("CorePartName") or fruit:GetAttribute("PlantName") or fruit.Name or "Fruit"
+    StolenFruits[fruitName] = (StolenFruits[fruitName] or 0) + 1
     return true
 end
 
@@ -1394,27 +1431,33 @@ end
 
 local function trySprinklerAndWater()
     if not Networking then return end
-    if not selectedSprinklerRarity and not selectedWateringCan then return end
     local plotId = LocalPlayer:GetAttribute("PlotId")
     if not plotId then return end
-    local placePos = getGardenPlantSpot()
+    local placePos = randomPlantSpot()
     if not placePos then return end
     goToGardenSpot(placePos)
 
-    if selectedSprinklerRarity then
-        local sprinklerTool, sprinklerName = findGearTool("Sprinkler", selectedSprinklerRarity)
-        if sprinklerTool and sprinklerName and Networking.Place and Networking.Place.PlaceSprinkler then
-            equipTool(sprinklerTool)
-            safeFire(Networking.Place.PlaceSprinkler, placePos, sprinklerName, sprinklerTool, plotId)
-            task.wait(0.35)
+    local sprinklerPriority = selectedSprinklerRarity and { selectedSprinklerRarity } or SPRINKLER_OPTIONS
+    local canPriority = selectedWateringCan and { selectedWateringCan } or WATERING_CAN_PRIORITY
+
+    for _, sprinklerName in ipairs(sprinklerPriority) do
+        local sprinklerTool, gearName = findGearTool("Sprinkler", sprinklerName)
+        if sprinklerTool and gearName and Networking.Place and Networking.Place.PlaceSprinkler then
+            if equipTool(sprinklerTool) then
+                safeFire(Networking.Place.PlaceSprinkler, placePos, gearName, sprinklerTool, plotId)
+                task.wait(0.35)
+            end
+            break
         end
     end
 
-    if selectedWateringCan and Networking.WateringCan and Networking.WateringCan.UseWateringCan then
-        local canTool, canName = findGearTool("WateringCan", selectedWateringCan)
-        if canTool and canName then
-            equipTool(canTool)
-            safeFire(Networking.WateringCan.UseWateringCan, placePos - Vector3.new(0, 0.3, 0), canName, canTool)
+    for _, canName in ipairs(canPriority) do
+        local canTool, gearName = findGearTool("WateringCan", canName)
+        if canTool and gearName and Networking.WateringCan and Networking.WateringCan.UseWateringCan then
+            if equipTool(canTool) then
+                safeFire(Networking.WateringCan.UseWateringCan, placePos - Vector3.new(0, 0.3, 0), gearName, canTool)
+            end
+            break
         end
     end
 end
@@ -1423,7 +1466,7 @@ local function plantSeedAtSpot(seedName)
     if not Networking or not Networking.Plant or not Networking.Plant.PlantSeed then return false end
     local tool = findSeedToolByName(seedName)
     if not tool then return false end
-    local pos = getGardenPlantSpot()
+    local pos = randomPlantSpot()
     if not pos then return false end
     goToGardenSpot(pos)
     if not equipTool(tool) then return false end
@@ -1682,7 +1725,11 @@ local function catchWildPetRef(hit, waitSeconds)
         task.wait(0.1)
     end
     if resultConn then resultConn:Disconnect() end
-    if tameDone then task.wait(0.4) end
+    if tameDone then
+        local petName = (hit.model and hit.model:GetAttribute("PetName")) or "Pet"
+        BoughtPets[petName] = (BoughtPets[petName] or 0) + 1
+        task.wait(0.4)
+    end
 
     isCatchingPet = false
     return tameDone
@@ -1945,18 +1992,53 @@ local function tryAutoMailLoop()
 end
 
 local function buildSeedShopText()
+    local items = getSeedShopItems()
+    if not items then return "No seed shop data" end
+    local list = {}
+    for _, val in ipairs(items:GetChildren()) do
+        if val:IsA("ValueBase") then
+            local stock = getSeedRemainingStock(val.Name)
+            if stock > 0 then
+                local price = getSeedCost(val.Name)
+                table.insert(list, {
+                    name = val.Name,
+                    stock = stock,
+                    price = price and tostring(price) or "?",
+                })
+            end
+        end
+    end
+    table.sort(list, function(a, b) return a.name < b.name end)
     local lines = {}
-    for _, seed in ipairs(getStockSeeds()) do
-        table.insert(lines, string.format("%s: %d (left %d)", seed, getSeedStock(seed), getSeedRemainingStock(seed)))
+    for _, it in ipairs(list) do
+        table.insert(lines, string.format("%s x%d | %s", it.name, it.stock, it.price))
     end
     if #lines == 0 then return "No seeds in stock" end
     return table.concat(lines, "\n")
 end
 
 local function buildGearShopText()
+    local shop = getGearShopFolder()
+    local items = shop and shop:FindFirstChild("Items")
+    if not items then return "No gear shop data" end
+    local list = {}
+    for _, val in ipairs(items:GetChildren()) do
+        if val:IsA("ValueBase") then
+            local stock = getGearRemainingStock(val.Name)
+            if stock > 0 then
+                local price = getGearCost(val.Name)
+                table.insert(list, {
+                    name = val.Name,
+                    stock = stock,
+                    price = price and tostring(price) or "?",
+                })
+            end
+        end
+    end
+    table.sort(list, function(a, b) return a.name < b.name end)
     local lines = {}
-    for _, gear in ipairs(getWantedGearNames()) do
-        table.insert(lines, string.format("%s: %d (left %d)", gear, getGearStock(gear), getGearRemainingStock(gear)))
+    for _, it in ipairs(list) do
+        table.insert(lines, string.format("%s x%d | %s", it.name, it.stock, it.price))
     end
     if #lines == 0 then return "No gear in stock" end
     return table.concat(lines, "\n")
@@ -1983,15 +2065,25 @@ local function jsonEncode(t)
     return ok and s or "{}"
 end
 
-local WEATHER_NAMES = { "Rain", "Lightning", "Rainbow", "Snowfall", "Starfall", "Aurora Borealis", "Blood Moon", "Night" }
+local WEATHER_NAMES = { "Rain", "Lightning", "Rainbow", "Snowfall", "Starfall", "Aurora Borealis", "Blood Moon", "Night", "Day" }
 
 local function findActiveWeather()
-    local active = Services.Workspace:GetAttribute("ActiveWeather")
-    if type(active) == "string" and active ~= "" then return active end
-    active = Services.ReplicatedStorage:GetAttribute("ActiveWeather")
-    if type(active) == "string" and active ~= "" then return active end
+    local weather = Services.Workspace:GetAttribute("ActiveWeather")
+    if type(weather) == "string" and weather ~= "" then
+        return weather
+    end
+    weather = Services.ReplicatedStorage:GetAttribute("ActiveWeather")
+    if type(weather) == "string" and weather ~= "" then
+        return weather
+    end
+    local phase = Services.Workspace:GetAttribute("ActivePhase")
+    if type(phase) == "string" and phase ~= "" and phase ~= "Day" then
+        return phase
+    end
     local night = Services.ReplicatedStorage:FindFirstChild("Night")
-    if night and night.Value then return "Night" end
+    if night and night.Value == true then
+        return "Night"
+    end
     return "Day"
 end
 
@@ -1999,7 +2091,7 @@ local function findWeatherEndTime()
     local phaseEnd = Services.Workspace:GetAttribute("PhaseDuration")
     if phaseEnd then
         local now = (Services.Workspace.GetServerTimeNow and Services.Workspace:GetServerTimeNow()) or os.time()
-        local remain = math.max(0, tonumber(phaseEnd) - now)
+        local remain = math.max(0, math.floor(tonumber(phaseEnd) - now))
         return string.format("%dm %ds", math.floor(remain / 60), remain % 60)
     end
     return "N/A"
@@ -2027,33 +2119,76 @@ local function getInventorySnapshot()
     return lines, #lines
 end
 
+local function buildPairedBuyLines(maxLines)
+    local seedList, gearList = {}, {}
+    for name, amt in pairs(BoughtSeeds) do
+        if amt > 0 then table.insert(seedList, name .. " x" .. amt) end
+    end
+    for name, amt in pairs(BoughtGears) do
+        if amt > 0 then table.insert(gearList, name .. " x" .. amt) end
+    end
+    table.sort(seedList)
+    table.sort(gearList)
+    local lines = {}
+    local rows = math.max(#seedList, #gearList)
+    maxLines = maxLines or 8
+    for i = 1, math.min(rows, maxLines) do
+        local s = seedList[i] or ""
+        local g = gearList[i] or ""
+        if s ~= "" and g ~= "" then
+            table.insert(lines, s .. " | " .. g)
+        elseif s ~= "" then
+            table.insert(lines, s)
+        elseif g ~= "" then
+            table.insert(lines, g)
+        end
+    end
+    if #lines == 0 then table.insert(lines, "none") end
+    return lines
+end
+
+local function buildPetBuyLines()
+    local lines = {}
+    for name, amt in pairs(BoughtPets) do
+        if amt > 0 then table.insert(lines, name .. " x" .. amt) end
+    end
+    table.sort(lines)
+    if #lines == 0 then table.insert(lines, "none") end
+    return lines
+end
+
+local function buildStolenFruitText()
+    local parts = {}
+    for name, amt in pairs(StolenFruits) do
+        if amt > 0 then table.insert(parts, name .. " x" .. amt) end
+    end
+    table.sort(parts)
+    if #parts == 0 then return "none" end
+    return table.concat(parts, ", ")
+end
+
 local function buildEmbed()
     local accountName = LocalPlayer.DisplayName ~= LocalPlayer.Name
         and (LocalPlayer.DisplayName .. " (@" .. LocalPlayer.Name .. ")") or LocalPlayer.Name
-    local seedLines, gearLines = {}, {}
-    for name, amt in pairs(BoughtSeeds) do
-        if amt > 0 then table.insert(seedLines, "• " .. name .. " x" .. amt) end
-    end
-    for name, amt in pairs(BoughtGears) do
-        if amt > 0 then table.insert(gearLines, "• " .. name .. " x" .. amt) end
-    end
-    if #seedLines == 0 then table.insert(seedLines, "_(none)_") end
-    if #gearLines == 0 then table.insert(gearLines, "_(none)_") end
-    local invItems, invTotal = getInventorySnapshot()
+    local invItems = getInventorySnapshot()
+    local invText = #invItems > 0 and table.concat(invItems, "\n") or "none"
     local desc = table.concat({
-        "** [ " .. accountName .. " ] **",
+        "** " .. accountName .. " **",
         "",
-        "** weather **",
-        findActiveWeather(),
-        "end: " .. findWeatherEndTime(),
+        "** weather: **",
+        findActiveWeather() .. " | end: " .. findWeatherEndTime(),
         "",
-        "** seeds bought **",
-        table.concat(seedLines, "\n"),
+        "** seed and gear **",
+        table.concat(buildPairedBuyLines(8), "\n"),
         "",
-        "** gears bought **",
-        table.concat(gearLines, "\n"),
+        "** pet **",
+        table.concat(buildPetBuyLines(), "\n"),
         "",
-        "** sheckles: " .. tostring(getSheckles()) .. " **",
+        "** inventory **",
+        invText,
+        "",
+        "sheckles amount: " .. tostring(getSheckles()),
+        "fruit steal: " .. buildStolenFruitText(),
     }, "\n")
     return {
         username = "NTMT HUB",
@@ -2061,7 +2196,6 @@ local function buildEmbed()
             title = "NTMT HUB | Grow a Garden 2",
             description = desc,
             color = 5763719,
-            footer = { text = "Total inv lines: " .. tostring(invTotal) },
             timestamp = os.date("!%Y-%m-%dT%H:%M:%SZ"),
         }},
     }
@@ -2197,16 +2331,26 @@ local ShopTab = Window:Tab({ Title = tr("tab_shop"), Icon = "shopping-cart" })
 registerUI(ShopTab, "tab_shop", "tab")
 local WebhookTab = Window:Tab({ Title = tr("tab_webhook"), Icon = "bell" })
 registerUI(WebhookTab, "tab_webhook", "tab")
+local ServerTab = Window:Tab({ Title = tr("tab_server"), Icon = "globe" })
+registerUI(ServerTab, "tab_server", "tab")
 local SettingsTab = Window:Tab({ Title = tr("tab_settings"), Icon = "settings" })
 registerUI(SettingsTab, "tab_settings", "tab")
+
+local function toggleDesc(key)
+    local d = tr("desc_" .. key)
+    if d == "desc_" .. key then return nil end
+    return d
+end
 
 local function makeToggle(tab, key, default, callback)
     local el = tab:Toggle({
         Title = tr(key),
+        Desc = toggleDesc(key),
         Default = default or false,
         Callback = callback,
     })
     registerUI(el, key, "title")
+    registerUI(el, "desc_" .. key, "desc")
     return el
 end
 
@@ -2269,7 +2413,6 @@ pcall(function()
 end)
 makeToggle(MainTab, "auto_sprinkler", false, function(state)
     genv.ftgs_AutoSprinkler = state
-    if state then fixedGardenSpot = nil end
     notify(tr("auto_sprinkler"), state and tr("enabled") or tr("disabled"))
 end)
 
@@ -2410,7 +2553,6 @@ pcall(function()
 end)
 makeToggle(AutoTab, "auto_plant", false, function(state)
     genv.ftgs_AutoPlant = state
-    if state then fixedGardenSpot = nil end
     notify(tr("auto_plant"), state and tr("enabled") or tr("disabled"))
 end)
 makeToggle(AutoTab, "auto_plant_all", false, function(state)
@@ -2491,39 +2633,103 @@ local gearShopLive = ShopTab:Paragraph({ Title = tr("gear_shop_live"), Desc = ge
 registerUI(gearShopLive, "gear_shop_live", "title")
 
 task.spawn(function()
-    while task.wait(5) do
+    local function refreshShopLive()
         pcall(function()
             seedShopLive:SetDesc(buildSeedShopText())
             gearShopLive:SetDesc(buildGearShopText())
         end)
     end
+    task.wait(2)
+    refreshShopLive()
+    local stockRoot = Services.ReplicatedStorage:FindFirstChild("StockValues")
+    if stockRoot then
+        for _, shopName in ipairs({ "SeedShop", "GearShop" }) do
+            local shop = stockRoot:FindFirstChild(shopName)
+            local last = shop and shop:FindFirstChild("UnixLastRestock")
+            if last and last:IsA("ValueBase") then
+                last.Changed:Connect(function() task.defer(refreshShopLive) end)
+            end
+            local items = shop and shop:FindFirstChild("Items")
+            if items then
+                items.ChildAdded:Connect(function(ch)
+                    task.defer(refreshShopLive)
+                    if ch:IsA("ValueBase") then
+                        ch.Changed:Connect(function() task.defer(refreshShopLive) end)
+                    end
+                end)
+                for _, ch in ipairs(items:GetChildren()) do
+                    if ch:IsA("ValueBase") then
+                        ch.Changed:Connect(function() task.defer(refreshShopLive) end)
+                    end
+                end
+            end
+        end
+    end
+    while task.wait(3) do
+        refreshShopLive()
+    end
 end)
 
-WebhookTab:Section({ Title = "Server" })
+ServerTab:Section({ Title = tr("tab_server") })
 pcall(function()
-    local inp = WebhookTab:Input({
+    local inp = ServerTab:Input({
         Title = tr("job_id"), Value = pendingJobId, Placeholder = "JobId",
         Callback = function(v) pendingJobId = tostring(v or ""):gsub("^%s+", ""):gsub("%s+$", "") end,
     })
     registerUI(inp, "job_id", "title")
 end)
-makeButton(WebhookTab, "join_server", "log-in", function()
+makeButton(ServerTab, "join_server", "log-in", function()
     if joinJobId(pendingJobId) then
         notify("Server", "Teleporting...", "send", 3)
     else
         notify("Server", "Invalid Job ID", "circle-x", 3)
     end
 end)
-makeButton(WebhookTab, "rejoin_server", "refresh-cw", function()
+makeButton(ServerTab, "rejoin_server", "refresh-cw", function()
     pcall(function()
         Services.TeleportService:TeleportToPlaceInstance(game.PlaceId, game.JobId, LocalPlayer)
     end)
 end)
-makeButton(WebhookTab, "hop_server", "shuffle", function()
+makeButton(ServerTab, "hop_server", "shuffle", function()
     if hopRandomServer() then notify("Server", "Hopping...", "send", 2)
     else notify("Server", "Hop failed", "circle-x", 3) end
 end)
-makeButton(WebhookTab, "copy_job_id", "copy", copyJobId)
+makeButton(ServerTab, "copy_job_id", "copy", copyJobId)
+
+makeSection(ServerTab, "select_pet_find")
+pcall(function()
+    local dd = ServerTab:Dropdown({
+        Title = tr("select_pet_find"), Values = PET_NAMES, Value = nil,
+        Multi = true,
+        AllowNone = true,
+        Callback = function(sel)
+            FindPetWhitelist = {}
+            if type(sel) == "table" then
+                for k, v in pairs(sel) do
+                    if type(v) == "string" then FindPetWhitelist[v] = true
+                    elseif type(k) == "string" and v then FindPetWhitelist[k] = true end
+                end
+            end
+        end,
+    })
+    registerUI(dd, "select_pet_find", "title")
+end)
+makeToggle(ServerTab, "auto_find_pet", false, function(state)
+    genv.ftgs_AutoFindPet = state
+    if state then petFoundOnServer = false end
+    notify(tr("auto_find_pet"), state and tr("enabled") or tr("disabled"))
+end)
+makeButton(ServerTab, "scan_server", "search", function() scanAndFindPet(true) end)
+makeButton(ServerTab, "hop_find_pet", "globe", function()
+    if petFoundOnServer then
+        notify("Find Pet", "Already found on this server", "check", 3)
+        return
+    end
+    if not scanAndFindPet(false) then
+        notify("Find Pet", "Hopping to search...", "shuffle", 3)
+        hopRandomServer()
+    end
+end)
 
 WebhookTab:Section({ Title = "Discord Webhook" })
 pcall(function()
@@ -2542,7 +2748,7 @@ makeToggle(WebhookTab, "auto_notification", false, function(v)
 end)
 pcall(function()
     local inp = WebhookTab:Input({
-        Title = tr("notify_minutes"), Value = tostring(webhookIntervalMinutes), Placeholder = "5",
+        Title = tr("notify_minutes"), Value = tostring(webhookIntervalMinutes), Placeholder = "1",
         Callback = function(v)
             local n = tonumber(tostring(v):match("%d+"))
             if n and n >= 1 then webhookIntervalMinutes = math.floor(n) end
@@ -2555,100 +2761,9 @@ makeButton(WebhookTab, "test_webhook", "send", function()
     else notify("Webhook", "Failed", "circle-x", 3) end
 end)
 
-makeSection(WebhookTab, "select_pet_find")
-pcall(function()
-    local dd = WebhookTab:Dropdown({
-        Title = tr("select_pet_find"), Values = PET_NAMES, Value = nil,
-        Multi = true,
-        AllowNone = true,
-        Callback = function(sel)
-            FindPetWhitelist = {}
-            if type(sel) == "table" then
-                for k, v in pairs(sel) do
-                    if type(v) == "string" then FindPetWhitelist[v] = true
-                    elseif type(k) == "string" and v then FindPetWhitelist[k] = true end
-                end
-            end
-        end,
-    })
-    registerUI(dd, "select_pet_find", "title")
-end)
-makeToggle(WebhookTab, "auto_find_pet", false, function(state)
-    genv.ftgs_AutoFindPet = state
-    if state then petFoundOnServer = false end
-    notify(tr("auto_find_pet"), state and tr("enabled") or tr("disabled"))
-end)
-makeButton(WebhookTab, "scan_server", "search", function() scanAndFindPet(true) end)
-makeButton(WebhookTab, "hop_find_pet", "globe", function()
-    if petFoundOnServer then
-        notify("Find Pet", "Already found on this server", "check", 3)
-        return
-    end
-    if not scanAndFindPet(false) then
-        notify("Find Pet", "Hopping to search...", "shuffle", 3)
-        hopRandomServer()
-    end
-end)
-
-makeSection(SettingsTab, "discord_link")
-makeButton(SettingsTab, "discord_link", "link", function()
-    local clip = setclipboard or toclipboard
-    if clip then pcall(clip, DISCORD_LINK) end
-    notify("Discord", DISCORD_LINK, "link", 4)
-end, DISCORD_LINK)
-
-makeSection(SettingsTab, "executor_label")
-local executorInfo = SettingsTab:Paragraph({ Title = tr("executor_label"), Desc = Executor })
-registerUI(executorInfo, "executor_label", "title")
-
-makeSection(SettingsTab, "roblox_user")
-SettingsTab:Paragraph({ Title = tr("roblox_user"), Desc = LocalPlayer.Name .. " (" .. LocalPlayer.DisplayName .. ")" })
-
-makeButton(SettingsTab, "redeem_code", "gift", function()
-    if Networking and Networking.Settings and Networking.Settings.SubmitCode then
-        safeFire(Networking.Settings.SubmitCode, "TEAMGREENBEAN")
-        notify("Redeem", "Submitted TEAMGREENBEAN", "check", 3)
-    else
-        notify("Redeem", "SubmitCode not available", "circle-x", 3)
-    end
-end)
-
-
-makeSection(SettingsTab, "walk_speed")
-SettingsTab:Slider({
-    Title = tr("walk_speed"), Step = 1,
-    Value = { Min = 16, Max = 250, Default = 16 },
-    Callback = function(v) desiredWalkSpeed = v applyMovement() end,
-})
-
-makeSection(SettingsTab, "jump_power")
-SettingsTab:Slider({
-    Title = tr("jump_power"), Step = 1,
-    Value = { Min = 50, Max = 500, Default = 50 },
-    Callback = function(v) desiredJumpPower = v applyMovement() end,
-})
-
-makeSection(SettingsTab, "language")
-local LANG_OPTIONS = { "English", "Vietnamese" }
-pcall(function()
-    SettingsTab:Dropdown({
-        Title = tr("language"), Values = LANG_OPTIONS, Value = currentLang,
-        Callback = function(v)
-            if type(v) == "table" then v = v[1] end
-            if type(v) ~= "string" then return end
-            for langName in pairs(I18N) do
-                if langName:lower() == v:lower() then
-                    currentLang = langName
-                    break
-                end
-            end
-        end,
-    })
-end)
-makeButton(SettingsTab, "translate", "languages", function()
-    applyTranslations()
-    notify(tr("translate"), currentLang, "check", 2)
-end)
+SettingsTab:Paragraph({ Title = tr("discord_link"), Desc = DISCORD_LINK })
+SettingsTab:Paragraph({ Title = tr("executor_label"), Desc = Executor })
+SettingsTab:Paragraph({ Title = tr("roblox_user"), Desc = LocalPlayer.Name })
 
 end -- if Window
 
